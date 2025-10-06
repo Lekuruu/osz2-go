@@ -69,7 +69,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing file %s: %v\n", fileName, err)
 			continue
 		}
-		fmt.Printf("  ✓ %s (%d bytes)\n", fileName, len(content))
+		fmt.Printf("  -> %s (%d bytes)\n", fileName, len(content))
 	}
 
 	// Build metadata structure
@@ -92,7 +92,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n✓ Extraction complete!\n")
+	fmt.Printf("\nExtraction complete!\n")
 	fmt.Printf("  Files extracted: %d\n", len(pkg.Files))
 	fmt.Printf("  Metadata saved to: %s\n", metadataPath)
 }
