@@ -124,3 +124,6 @@ fabric.properties
 
 # Ignore build output
 osz2-cli*
+
+# Ignore output folder for testing
+output/
