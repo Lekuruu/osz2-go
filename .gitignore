@@ -121,3 +121,6 @@ fabric.properties
 # Ignore all local history of files
 .history
 .ionide
+
+# Ignore build output
+osz2-cli*
