@@ -237,10 +237,16 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 	// and decrypts incrementally as BinaryReader requests bytes
 	keyArray := bytesToUint32Array(p.key)
 
+	// Create XXTEA reader to decrypt file info
 	fileInfoReader := NewXXTEAReader(bytes.NewReader(fileInfo), keyArray)
 
 	// Parse the file info using the streaming XXTEA reader
-	if err := p.parseFileInfo(fileInfoReader, int(fileOffset), int(totalSize)); err != nil {
+	err := p.parseFileInfo(
+		fileInfoReader, fileInfo,
+		int(fileOffset), int(totalSize),
+	)
+
+	if err != nil {
 		return err
 	}
 
@@ -249,17 +255,17 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 }
 
 // parseFileInfo parses the decrypted file info section
-func (p *Package) parseFileInfo(r io.Reader, fileOffset int, totalSize int) error {
+func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffset int, totalSize int) error {
 	var count int32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
 		return err
 	}
 
-	// Skip hash verification for debugging
-	// hash := computeOszHash(fileInfo, int(count)*4, 0xd1)
-	// if !bytes.Equal(hash, p.fileInfoHash) {
-	//	return errors.New("fileInfo hash mismatch")
-	// }
+	// Verify file info hash
+	fileInfoHash := computeOszHash(encryptedFileInfo, int(count)*4, 0xd1)
+	if !bytes.Equal(fileInfoHash, p.FileInfoHash) {
+		return errors.New("fileInfo hash mismatch")
+	}
 
 	var currentOffset int32
 	if err := binary.Read(r, binary.LittleEndian, &currentOffset); err != nil {
