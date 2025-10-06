@@ -386,50 +386,6 @@ func readStringFromBuffer(r io.Reader) (string, error) {
 	return string(data), nil
 }
 
-// readStringFromStream reads a string from a stream reader
-func readStringFromStream(stream io.Reader) (string, error) {
-	// Read length (7-bit encoded)
-	length, err := read7BitEncodedIntFromStream(stream)
-	if err != nil {
-		return "", err
-	}
-
-	if length == 0 {
-		return "", nil
-	}
-
-	data := make([]byte, length)
-	if _, err := stream.Read(data); err != nil {
-		return "", err
-	}
-
-	return string(data), nil
-}
-
-// read7BitEncodedIntFromStream reads a 7-bit encoded int from a stream
-func read7BitEncodedIntFromStream(stream io.Reader) (int32, error) {
-	var result int32
-	var shift uint
-	for {
-		var b byte
-		if err := binary.Read(stream, binary.LittleEndian, &b); err != nil {
-			return 0, err
-		}
-
-		result |= int32(b&0x7F) << shift
-		if (b & 0x80) == 0 {
-			break
-		}
-		shift += 7
-
-		// Protect against malformed data
-		if shift >= 32 {
-			return 0, errors.New("7-bit encoded int is too large")
-		}
-	}
-	return result, nil
-}
-
 // writeStringToBuffer writes a string to buffer in .NET format
 func writeStringToBuffer(buf *bytes.Buffer, s string) {
 	write7BitEncodedInt(buf, len(s))
