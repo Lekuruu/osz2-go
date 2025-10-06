@@ -22,7 +22,7 @@ type Metadata struct {
 	ArtistUnicode string            `json:"artist_unicode,omitempty"`
 	Difficulty    string            `json:"difficulty,omitempty"`
 	PreviewTime   string            `json:"preview_time,omitempty"`
-	AllMetadata   map[string]string `json:"all_metadata"`
+	Attributes    map[string]string `json:"attributes"`
 	Files         []FileMetadata    `json:"files"`
 	Hashes        HashData          `json:"hashes"`
 }
@@ -46,8 +46,8 @@ type HashData struct {
 
 func buildMetadata(pkg *osz2.Package) *Metadata {
 	metadata := &Metadata{
-		AllMetadata: make(map[string]string),
-		Files:       make([]FileMetadata, 0),
+		Attributes: make(map[string]string),
+		Files:      make([]FileMetadata, 0),
 		Hashes: HashData{
 			MetaDataHash: fmt.Sprintf("%x", pkg.MetaDataHash),
 			FileInfoHash: fmt.Sprintf("%x", pkg.FileInfoHash),
@@ -58,7 +58,7 @@ func buildMetadata(pkg *osz2.Package) *Metadata {
 	// Convert all metadata to string map
 	for metaType, value := range pkg.Metadata {
 		key := metaType.String()
-		metadata.AllMetadata[key] = value
+		metadata.Attributes[key] = value
 
 		// Also populate specific fields
 		switch metaType {
