@@ -81,7 +81,7 @@ func main() {
 		metadataPath = filepath.Join(*outputDir, metadataPath)
 	}
 
-	jsonData, err := json.MarshalIndent(metadata, "", "  ")
+	jsonData, err := json.MarshalIndent(metadata, "", "    ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling metadata to JSON: %v\n", err)
 		os.Exit(1)
