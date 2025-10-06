@@ -1,5 +1,10 @@
 # osz2-go
 
+![Go Version](https://img.shields.io/github/go-mod/go-version/Lekuruu/osz2-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Lekuruu/osz2-go.svg)](https://pkg.go.dev/github.com/Lekuruu/osz2-go)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lekuruu/osz2-go/.github%2Fworkflows%2Fbuild.yml)
+![GitHub License](https://img.shields.io/github/license/Lekuruu/osz2-go)
+
 osz2-go is a go library for reading and extracting osz2 files. It provides functionality to parse, decrypt, and extract osz2 beatmap packages, using [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
 
 ## Features
