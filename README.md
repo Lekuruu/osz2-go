@@ -55,7 +55,7 @@ func main() {
     fmt.Println("Artist:", pkg.Metadata[osz2.MetaArtist])
 
     // Access files
-    for filename, content := range pkg.Files {
+    for filename, content := range pkg.Files() {
         fmt.Printf("File: %s, Size: %d bytes\n", filename, len(content))
     }
 }
