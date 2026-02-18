@@ -30,9 +30,14 @@ type Package struct {
 	MetaDataHash []byte
 	FileInfoHash []byte
 	FullBodyHash []byte
+	IV           []byte
+	Version      byte
 
 	// Key for XTEA algorithm
 	key []byte
+
+	// KeyType controls the key derivation
+	KeyType KeyType
 
 	// Need decrypt only metadata?
 	metadataOnly bool
@@ -40,12 +45,20 @@ type Package struct {
 
 // NewPackage creates a new osz2 package from a reader
 func NewPackage(r io.ReadSeeker, metadataOnly bool) (*Package, error) {
+	return NewPackageWithKeyType(r, metadataOnly, KeyTypeOSZ2)
+}
+
+// NewPackageWithKeyType creates a new package from a reader with a specific key derivation
+func NewPackageWithKeyType(r io.ReadSeeker, metadataOnly bool, keyType KeyType) (*Package, error) {
 	p := &Package{
 		Metadata:     make(map[MetaType]string),
 		FileInfos:    make(map[string]*FileInfo),
 		Files:        make(map[string][]byte),
 		FileNames:    make(map[string]int32),
 		FileIDs:      make(map[int32]string),
+		Version:      0,
+		IV:           make([]byte, 16),
+		KeyType:      keyType,
 		metadataOnly: metadataOnly,
 	}
 
@@ -110,16 +123,12 @@ func (p *Package) read(r io.ReadSeeker) error {
 		return err
 	}
 
-	// Generate seed using metadata
-	creator, ok_creator := p.Metadata[Creator]
-	beatmapSetID, ok_setID := p.Metadata[BeatmapSetID]
-
-	if !ok_creator || !ok_setID {
-		return errors.New("missing required metadata for key generation")
+	// Generate key using selected key type
+	var err error
+	p.key, err = p.KeyType.Generate(p.Metadata)
+	if err != nil {
+		return err
 	}
-
-	seed := creator + "yhxyfjo5" + beatmapSetID
-	p.key = ComputeHashBytesRaw([]byte(seed))
 
 	if !p.metadataOnly {
 		return p.readFiles(r)
