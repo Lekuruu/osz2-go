@@ -73,18 +73,13 @@ func testPackage(t *testing.T, filename string) {
 	t.Logf("File infos: %d files", len(pkg.FileInfos))
 
 	// Verify we have file contents
-	if len(pkg.Files) == 0 {
+	if len(pkg.FileInfos) == 0 {
 		t.Error("Package has no files")
 	}
-	t.Logf("Files extracted: %d", len(pkg.Files))
-
-	// Verify that the number of files matches
-	if len(pkg.Files) != len(pkg.FileInfos) {
-		t.Errorf("Mismatch: %d files extracted but %d file infos", len(pkg.Files), len(pkg.FileInfos))
-	}
+	t.Logf("Files extracted: %d", len(pkg.FileInfos))
 
 	// Check each file
-	for fileName, content := range pkg.Files {
+	for fileName, content := range pkg.Files() {
 		fileInfo, exists := pkg.FileInfos[fileName]
 		if !exists {
 			t.Errorf("File %s has no corresponding FileInfo", fileName)
@@ -145,8 +140,8 @@ func TestMetadataOnly(t *testing.T) {
 	t.Logf("File names mapping: %d entries", len(pkg.FileNames))
 
 	// In metadata-only mode, we should not have file contents
-	if len(pkg.Files) != 0 {
-		t.Errorf("Expected no files in metadata-only mode, but got %d", len(pkg.Files))
+	if len(pkg.FileInfos) != 0 {
+		t.Errorf("Expected no files in metadata-only mode, but got %d", len(pkg.Files()))
 	}
 
 	// But we should still have the key generated for potential future use

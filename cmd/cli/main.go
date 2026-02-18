@@ -52,8 +52,9 @@ func main() {
 	}
 
 	// Extract files
-	fmt.Printf("Extracting %d files to %s...\n", len(pkg.Files), *outputDir)
-	for fileName, content := range pkg.Files {
+	files := pkg.Files()
+	fmt.Printf("Extracting %d files to %s...\n", len(files), *outputDir)
+	for fileName, content := range files {
 		outputPath := filepath.Join(*outputDir, fileName)
 
 		// Create subdirectories if needed
@@ -93,7 +94,7 @@ func main() {
 	}
 
 	fmt.Printf("\nExtraction complete!\n")
-	fmt.Printf("  Files extracted: %d\n", len(pkg.Files))
+	fmt.Printf("  Files extracted: %d\n", len(files))
 	fmt.Printf("  Metadata saved to: %s\n", metadataPath)
 }
 

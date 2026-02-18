@@ -140,6 +140,9 @@ func (p *Package) readFileNames(r io.ReadSeeker) error {
 
 		p.FileNames[fileName] = beatmapID
 		p.FileIDs[beatmapID] = fileName
+		if info, ok := p.FileInfos[fileName]; ok && info != nil {
+			info.BeatmapID = beatmapID
+		}
 	}
 
 	return nil
@@ -266,10 +269,14 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 
 		fileLength := nextOffset - currentOffset
 
-		p.FileInfos[fileName] = NewFileInfo(
+		info := NewFileInfo(
 			fileName, currentOffset, fileLength,
 			fileHash, dateCreated, dateModified,
 		)
+		if beatmapID, ok := p.FileNames[fileName]; ok {
+			info.BeatmapID = beatmapID
+		}
+		p.FileInfos[fileName] = info
 
 		// Move to next file offset
 		currentOffset = nextOffset
@@ -296,7 +303,9 @@ func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
 			continue
 		}
 
-		p.Files[fileName] = content
+		if info, ok := p.FileInfos[fileName]; ok && info != nil {
+			info.Content = content
+		}
 	}
 
 	return nil

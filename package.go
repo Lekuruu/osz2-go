@@ -22,9 +22,6 @@ type Package struct {
 	// FileInfos contains .osu file info (e.g FileName, Hash, Size etc..)
 	FileInfos map[string]*FileInfo
 
-	// Files contains osz2 file contents
-	Files map[string][]byte
-
 	// FileNames maps filename to beatmap id
 	FileNames map[string]int32
 
@@ -56,7 +53,6 @@ func NewPackageWithKeyType(r io.ReadSeeker, metadataOnly bool, keyType KeyType) 
 	p := &Package{
 		Metadata:     make(map[MetaType]string),
 		FileInfos:    make(map[string]*FileInfo),
-		Files:        make(map[string][]byte),
 		FileNames:    make(map[string]int32),
 		FileIDs:      make(map[int32]string),
 		Version:      0,
@@ -103,7 +99,6 @@ func NewEmptyPackage(keyType KeyType) *Package {
 	return &Package{
 		Metadata:  make(map[MetaType]string),
 		FileInfos: make(map[string]*FileInfo),
-		Files:     make(map[string][]byte),
 		FileNames: make(map[string]int32),
 		FileIDs:   make(map[int32]string),
 		Version:   0,
@@ -112,27 +107,44 @@ func NewEmptyPackage(keyType KeyType) *Package {
 	}
 }
 
+// Files returns package file contents as a filename to byte-array map
+func (p *Package) Files() map[string][]byte {
+	result := make(map[string][]byte, len(p.FileInfos))
+	for name, info := range p.FileInfos {
+		if info == nil || info.Content == nil {
+			continue
+		}
+		result[name] = info.Content
+	}
+	return result
+}
+
 // FindFileByName gets file content by filename
 func (p *Package) FindFileByName(name string) ([]byte, bool) {
-	content, ok := p.Files[name]
-	return content, ok
+	info, ok := p.FileInfos[name]
+	if !ok {
+		return nil, false
+	}
+	if info == nil || info.Content == nil {
+		return nil, false
+	}
+	return info.Content, true
 }
 
 // FindFileByBeatmapID gets file content by beatmap ID
 func (p *Package) FindFileByBeatmapID(beatmapID int32) (string, []byte, bool) {
-	name, ok := p.FileIDs[beatmapID]
-	if !ok {
-		return "", nil, false
+	if name, ok := p.FileIDs[beatmapID]; ok {
+		info := p.FileInfos[name]
+		if info == nil {
+			return name, nil, false
+		}
+		return name, info.Content, info.Content != nil
 	}
-	content, ok := p.Files[name]
-	if !ok {
-		return name, nil, false
-	}
-	return name, content, true
+	return "", nil, false
 }
 
 // AddFile adds or replaces a file in the package
-func (p *Package) AddFile(filename string, content []byte, dateCreated, dateModified time.Time) {
+func (p *Package) AddFile(filename string, content []byte, dateCreated, dateModified time.Time) *FileInfo {
 	if dateCreated.IsZero() {
 		dateCreated = time.Now().UTC()
 	}
@@ -140,25 +152,24 @@ func (p *Package) AddFile(filename string, content []byte, dateCreated, dateModi
 		dateModified = time.Now().UTC()
 	}
 
-	dataCopy := make([]byte, len(content))
-	copy(dataCopy, content)
-	p.Files[filename] = dataCopy
+	info := NewFileInfo(filename, 0, int32(len(content)+4), nil, dateCreated, dateModified)
+	info.Content = content
+	p.AddFileInfo(info)
+	return info
+}
 
-	info, ok := p.FileInfos[filename]
-	if !ok {
-		info = NewFileInfo(filename, 0, int32(len(dataCopy)+4), nil, dateCreated, dateModified)
-		p.FileInfos[filename] = info
-	}
-
-	info.DateCreated = dateCreated.UTC()
-	info.DateModified = dateModified.UTC()
-	info.Size = int32(len(dataCopy) + 4)
-	info.Hash = ComputeHashBytesRaw(dataCopy)
+// AddFileInfo adds or replaces a FileInfo in the package
+func (p *Package) AddFileInfo(info *FileInfo) {
+	p.FileInfos[info.FileName] = info
 
 	if info.IsBeatmap() {
-		if _, exists := p.FileNames[filename]; !exists {
-			p.FileNames[filename] = -1
-			p.FileIDs[-1] = filename
+		if _, exists := p.FileNames[info.FileName]; !exists {
+			p.FileNames[info.FileName] = -1
+			p.FileIDs[-1] = info.FileName
+			info.BeatmapID = -1
+		}
+		if beatmapID, exists := p.FileNames[info.FileName]; exists {
+			info.BeatmapID = beatmapID
 		}
 	}
 }
@@ -197,6 +208,7 @@ func (p *Package) AddDirectory(path string, recursive bool) error {
 		if err != nil {
 			return err
 		}
+
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
@@ -227,11 +239,10 @@ func (p *Package) AddDirectory(path string, recursive bool) error {
 
 // RemoveFile removes a file from the package
 func (p *Package) RemoveFile(filename string) bool {
-	_, ok := p.Files[filename]
+	_, ok := p.FileInfos[filename]
 	if !ok {
 		return false
 	}
-	delete(p.Files, filename)
 	delete(p.FileInfos, filename)
 
 	if beatmapID, exists := p.FileNames[filename]; exists {
@@ -263,21 +274,26 @@ func (p *Package) GetMetadata(metaType MetaType) (string, bool) {
 
 // SetBeatmapID sets beatmap ID for a .osu file
 func (p *Package) SetBeatmapID(filename string, beatmapID int32) error {
-	if _, ok := p.Files[filename]; !ok {
+	if _, ok := p.FileInfos[filename]; !ok {
 		return fmt.Errorf("file not found: %s", filename)
 	}
+
 	info := p.FileInfos[filename]
 	if info == nil {
-		info = &FileInfo{FileName: filename}
+		return fmt.Errorf("file info is nil: %s", filename)
 	}
 	if !info.IsBeatmap() {
 		return fmt.Errorf("file is not a beatmap: %s", filename)
 	}
+
 	if oldID, ok := p.FileNames[filename]; ok {
 		delete(p.FileIDs, oldID)
 	}
 	p.FileNames[filename] = beatmapID
 	p.FileIDs[beatmapID] = filename
+	if info, exists := p.FileInfos[filename]; exists && info != nil {
+		info.BeatmapID = beatmapID
+	}
 	return nil
 }
 
@@ -289,13 +305,17 @@ func (p *Package) SetBeatmapSetID(beatmapSetID int64) {
 // CreateOszPackage creates a plain .osz zip package from the current files
 func (p *Package) CreateOszPackage(excludeDisallowedFiles bool) ([]byte, error) {
 	var buf bytes.Buffer
+
 	zw := zip.NewWriter(&buf)
 	defer zw.Close()
 
-	for filename, content := range p.Files {
-		info, ok := p.FileInfos[filename]
-		if !ok || info == nil {
-			info = &FileInfo{FileName: filename}
+	for _, info := range p.FileInfos {
+		if info == nil {
+			continue
+		}
+		content := info.Content
+		if content == nil {
+			continue
 		}
 		if excludeDisallowedFiles {
 			if !info.IsAllowedExtension() {

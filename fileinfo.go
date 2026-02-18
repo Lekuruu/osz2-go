@@ -14,6 +14,8 @@ type FileInfo struct {
 	Hash         []byte
 	DateCreated  time.Time
 	DateModified time.Time
+	BeatmapID    int32
+	Content      []byte
 }
 
 // NewFileInfo creates a new FileInfo instance
@@ -25,6 +27,7 @@ func NewFileInfo(fileName string, offset, size int32, hash []byte, dateCreated, 
 		Hash:         hash,
 		DateCreated:  dateCreated,
 		DateModified: dateModified,
+		BeatmapID:    -1,
 	}
 }
 
