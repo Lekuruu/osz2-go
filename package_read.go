@@ -283,7 +283,7 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
 	for fileName, fileInfo := range p.FileInfos {
 		content := make([]byte, fileInfo.Size-4) // -4 because of the encrypted length prefix
-		_, err := readEncryptedFileContent(r, fileOffset+int(fileInfo.Offset), p.key, content)
+		_, err := readEncryptedEntryContent(r, fileOffset+int(fileInfo.Offset), p.key, content)
 		if err != nil {
 			fmt.Printf("Failed to read: %s\n", fileName)
 			continue
@@ -309,7 +309,7 @@ func readEncryptedEntryLength(reader io.ReadSeeker, offset int, xxtea *XXTEA) (i
 	return int(binary.LittleEndian.Uint32(encryptedLength)), nil
 }
 
-func readEncryptedFileContent(reader io.ReadSeeker, offset int, key []byte, buffer []byte) (int, error) {
+func readEncryptedEntryContent(reader io.ReadSeeker, offset int, key []byte, buffer []byte) (int, error) {
 	xxtea := NewXXTEA(bytesToUint32Array(key))
 	entryLength, err := readEncryptedEntryLength(reader, offset, xxtea)
 	if err != nil {
