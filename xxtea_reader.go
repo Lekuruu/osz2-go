@@ -4,7 +4,7 @@ import (
 	"io"
 )
 
-// XXTEAReader provides streaming XXTEA decryption matching C# XXTeaStream behavior
+// XXTEAReader provides streaming XXTEA decryption
 type XXTEAReader struct {
 	reader io.Reader
 	xxtea  *XXTEA
@@ -19,7 +19,6 @@ func NewXXTEAReader(reader io.Reader, key []uint32) *XXTEAReader {
 }
 
 // Read reads data from the underlying reader and decrypts it
-// This matches the C# XXTeaStream.Read behavior exactly
 func (x *XXTEAReader) Read(p []byte) (n int, err error) {
 	// Read from underlying reader
 	bytesRead, err := x.reader.Read(p)
