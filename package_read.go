@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 )
 
-// read reads the osz2 package data
 func (p *Package) read(r io.ReadSeeker) error {
 	// Read identifier (magic number)
 	identifier := make([]byte, 3)
@@ -76,7 +74,6 @@ func (p *Package) read(r io.ReadSeeker) error {
 	return nil
 }
 
-// readMetadata reads the metadata section
 func (p *Package) readMetadata(r io.ReadSeeker) error {
 	var count int32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
@@ -120,7 +117,6 @@ func (p *Package) readMetadata(r io.ReadSeeker) error {
 	return nil
 }
 
-// readFileNames reads the filename to beatmap ID mapping
 func (p *Package) readFileNames(r io.ReadSeeker) error {
 	var mapsCount int32
 	if err := binary.Read(r, binary.LittleEndian, &mapsCount); err != nil {
@@ -149,7 +145,6 @@ func (p *Package) readFileNames(r io.ReadSeeker) error {
 	return nil
 }
 
-// readFiles reads the actual file contents
 func (p *Package) readFiles(r io.ReadSeeker) error {
 	// Convert key to uint32 array for XTEA
 	key := bytesToUint32Array(p.key)
@@ -215,7 +210,6 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 	return p.readFileContents(r, int(fileOffset))
 }
 
-// parseFileInfo parses the decrypted file info section
 func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffset int, totalSize int) error {
 	var count int32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
@@ -286,18 +280,10 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 	return nil
 }
 
-// readFileContents reads the actual file contents
 func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
 	for fileName, fileInfo := range p.FileInfos {
-		entryReader, err := newEncryptedFileReader(r, fileOffset+int(fileInfo.Offset), p.key)
-		if err != nil {
-			fmt.Printf("Failed to create reader for: %s\n", fileName)
-			continue
-		}
-
-		// Read file content
 		content := make([]byte, fileInfo.Size-4) // -4 because of the encrypted length prefix
-		_, err = entryReader.Read(content)
+		_, err := readEncryptedFileContent(r, fileOffset+int(fileInfo.Offset), p.key, content)
 		if err != nil {
 			fmt.Printf("Failed to read: %s\n", fileName)
 			continue
@@ -307,128 +293,43 @@ func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
 			info.Content = content
 		}
 	}
-
 	return nil
 }
 
-type encryptedFileReader struct {
-	reader     io.ReadSeeker
-	offset     int
-	length     int
-	position   int
-	skipBuffer []byte
-	xxtea      *XXTEA
-}
-
-func newEncryptedFileReader(reader io.ReadSeeker, offset int, key []byte) (*encryptedFileReader, error) {
+func readEncryptedEntryLength(reader io.ReadSeeker, offset int, xxtea *XXTEA) (int, error) {
 	encryptedLength := make([]byte, 4)
-	reader.Seek(int64(offset), io.SeekStart)
-	if _, err := reader.Read(encryptedLength); err != nil {
-		return nil, err
+	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
+		return 0, err
+	}
+	if _, err := io.ReadFull(reader, encryptedLength); err != nil {
+		return 0, err
 	}
 
-	keyBuffer := bytesToUint32Array(key)
-	xxtea := NewXXTEA(keyBuffer)
 	xxtea.Decrypt(encryptedLength, 0, 4)
-	length := int(binary.LittleEndian.Uint32(encryptedLength))
-
-	return &encryptedFileReader{
-		reader:     reader,
-		offset:     offset + 4,
-		length:     length,
-		position:   offset + 4,
-		skipBuffer: make([]byte, 64),
-		xxtea:      xxtea,
-	}, nil
+	return int(binary.LittleEndian.Uint32(encryptedLength)), nil
 }
 
-func (reader *encryptedFileReader) PositionInEntry() int {
-	return reader.position - reader.offset
-}
+func readEncryptedFileContent(reader io.ReadSeeker, offset int, key []byte, buffer []byte) (int, error) {
+	xxtea := NewXXTEA(bytesToUint32Array(key))
+	entryLength, err := readEncryptedEntryLength(reader, offset, xxtea)
+	if err != nil {
+		return 0, err
+	}
 
-func (reader *encryptedFileReader) Read(buffer []byte) (int, error) {
 	count := len(buffer)
-	offset := 0
-
-	if reader.PositionInEntry()+count > reader.length {
-		count = reader.length - reader.PositionInEntry()
+	if count > entryLength {
+		count = entryLength
 	}
 
 	if count == 0 {
 		return 0, io.EOF
 	}
-
-	localPosition := reader.PositionInEntry()
-	seekablePosition := localPosition & ^0x3F
-	skipOffset := localPosition % 64
-	seekableBytes := count - (64 - skipOffset)
-
-	var endLeftOver int
-	var seekableEnd int
-
-	if seekableBytes > 0 {
-		seekableEnd = (localPosition + count) & ^0x3F
-		endLeftOver = (localPosition + count) % 64
-		seekableBytes = seekableEnd - (64 - skipOffset + localPosition)
-
-		if seekableBytes > 0 {
-			reader.reader.Seek(int64(reader.position), io.SeekStart)
-			if _, err := reader.reader.Read(buffer[offset:]); err != nil {
-				return 0, err
-			}
-			reader.Decrypt(buffer, 64-skipOffset+offset, seekableBytes)
-		}
-	}
-
-	firstBytes := int(math.Min(64, float64(reader.length-seekablePosition)))
-
-	reader.reader.Seek(int64(seekablePosition+reader.offset), io.SeekStart)
-	if _, err := reader.reader.Read(reader.skipBuffer[:firstBytes]); err != nil {
+	if _, err := reader.Seek(int64(offset+4), io.SeekStart); err != nil {
 		return 0, err
 	}
-	reader.Decrypt(reader.skipBuffer, 0, firstBytes)
-
-	copyLen := int(math.Min(float64(64-skipOffset), float64(count)))
-	copy(buffer[offset:], reader.skipBuffer[skipOffset:skipOffset+copyLen])
-
-	if endLeftOver > 0 {
-		lastBytes := int(math.Min(64, float64(reader.length-seekableEnd)))
-
-		reader.reader.Seek(int64(seekableEnd+reader.offset), io.SeekStart)
-		if _, err := reader.reader.Read(reader.skipBuffer[:lastBytes]); err != nil {
-			return 0, err
-		}
-		reader.Decrypt(reader.skipBuffer, 0, lastBytes)
-
-		copy(buffer[count-endLeftOver+offset:], reader.skipBuffer[:endLeftOver])
+	if _, err := io.ReadFull(reader, buffer[:count]); err != nil {
+		return 0, err
 	}
-
-	reader.reader.Seek(int64(reader.position), io.SeekStart)
-	reader.Seek(count, io.SeekCurrent)
-
+	xxtea.Decrypt(buffer, 0, count)
 	return count, nil
-}
-
-func (reader *encryptedFileReader) Seek(offset int, whence int) int {
-	switch whence {
-	case io.SeekStart:
-		if offset >= 0 {
-			reader.position = int(math.Min(float64(offset), float64(reader.length))) + reader.offset
-		}
-	case io.SeekCurrent:
-		if reader.PositionInEntry()+offset >= 0 {
-			newPos := reader.position + offset - reader.offset
-			reader.position = int(math.Min(float64(newPos), float64(reader.length))) + reader.offset
-		}
-	case io.SeekEnd:
-		if reader.length+offset >= 0 {
-			reader.position = reader.length + offset + reader.offset
-		}
-	}
-	reader.reader.Seek(int64(reader.position), io.SeekStart)
-	return reader.PositionInEntry()
-}
-
-func (reader *encryptedFileReader) Decrypt(buffer []byte, start, count int) {
-	reader.xxtea.Decrypt(buffer, start, count)
 }
