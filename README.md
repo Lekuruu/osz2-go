@@ -49,6 +49,8 @@ func main() {
     if err != nil {
         panic(err)
     }
+    // NOTE: To read osu!stream packages, i.e. `.osf2`
+    // pkg, err := osz2.NewPackageWithKeyType(file, false, osz2.KeyTypeOSF2)
 
     // Access metadata
     fmt.Println("Title:", pkg.Metadata[osz2.MetaTitle])
@@ -58,5 +60,16 @@ func main() {
     for filename, content := range pkg.Files() {
         fmt.Printf("File: %s, Size: %d bytes\n", filename, len(content))
     }
+
+    // Modify package contents
+    pkg.AddMetadata(osz2.Source, "my source")
+    pkg.AddFileFromDisk("new.osu", "/path/to/new.osu")
+
+    // Export edited package
+    data, err := pkg.Export()
+    if err != nil {
+        panic(err)
+    }
+    _ = data
 }
 ```
