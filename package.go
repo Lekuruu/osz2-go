@@ -11,6 +11,9 @@ import (
 
 // Package represents an osz2 package
 type Package struct {
+	IV      []byte
+	Version byte
+
 	// Metadata contains .osu metadata (e.g Artist, Difficulty, etc..)
 	Metadata map[MetaType]string
 
