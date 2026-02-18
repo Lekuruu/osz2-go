@@ -7,6 +7,8 @@ const (
 	TEARounds uint32 = 32
 )
 
+// "knownPlain" constant derived from FastRandom(1990)
+// https://github.com/ppy/osu-stream/blob/master/osu!stream/Helpers/osu!common/MapPackage.cs#L64
 var knownPlain = []byte{
 	0x55, 0xAA, 0x74, 0x10, 0x2B, 0x56, 0xB3, 0x9E,
 	0x25, 0x9E, 0xFE, 0xB7, 0xBE, 0x06, 0xFC, 0xF2,
@@ -18,6 +20,8 @@ var knownPlain = []byte{
 	0x68, 0xBF, 0xC6, 0x97, 0x5B, 0x1B, 0x5E, 0x7F,
 }
 
+// A list of all allowed file extensions in an .osz package
+// Did not cause any issues when testing on titanic
 var allowedFileExtensions = map[string]struct{}{
 	"osu": {}, "osz": {}, "osb": {}, "osk": {}, "png": {}, "mp3": {},
 	"wav": {}, "ogg": {}, "jpg": {}, "wmv": {}, "flv": {}, "flac": {},
@@ -25,6 +29,8 @@ var allowedFileExtensions = map[string]struct{}{
 	"ogv": {}, "mpeg": {}, "3gp": {}, "mkv": {}, "mp4": {}, "jpeg": {},
 }
 
+// osu! officially only uses ".avi", ".flv" and ".mpg" for
+// video files, so lets hope this won't cause any issues
 var videoFileExtensions = map[string]struct{}{
 	"wmv": {}, "flv": {}, "avi": {}, "m4v": {}, "mpg": {}, "mov": {},
 	"webm": {}, "ogv": {}, "mpeg": {}, "3gp": {}, "mkv": {}, "mp4": {},
