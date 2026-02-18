@@ -9,10 +9,13 @@ osz2-go is a go library for reading and extracting osz2 files. It provides funct
 
 ## Features
 
-- Parse osz2 package files
+- Parse osz2 & osf2 package files
     - Extract metadata (artist, title, difficulty, etc.)
     - Decrypt XXTEA-encrypted content
     - Extract all files from the package, including file info
+- Edit package contents in memory
+- Export packages back to `.osz2` / `.osf2`
+- Create a regular `.osz` package from decrypted contents
 - Command-line interface for easy extraction
 
 ## Usage
