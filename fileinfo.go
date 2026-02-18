@@ -36,8 +36,8 @@ func (f *FileInfo) FileExtension() string {
 	if f == nil {
 		return ""
 	}
-	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(strings.TrimSpace(f.FileName))), ".")
-	return ext
+	ext := filepath.Ext(strings.TrimSpace(f.FileName))
+	return strings.TrimPrefix(strings.ToLower(ext), ".")
 }
 
 // FileNameSanitized returns a path-safe filename
