@@ -23,6 +23,11 @@ func (x *XTEA) Decrypt(buffer []byte, start, count int) {
 	x.encryptDecrypt(buffer, start, count, false)
 }
 
+// Encrypt encrypts data using XTEA
+func (x *XTEA) Encrypt(buffer []byte, start, count int) {
+	x.encryptDecrypt(buffer, start, count, true)
+}
+
 // encryptDecrypt performs encryption or decryption
 func (x *XTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool) {
 	fullWordCount := count / 8
