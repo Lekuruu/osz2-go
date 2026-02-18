@@ -72,6 +72,7 @@ func (f *FileInfo) IsBeatmap() bool {
 }
 
 // IsCombinedBeatmap reports whether the file is an .osc combined beatmap file
+// https://github.com/ppy/osu-stream/blob/master/BeatmapCombinator/Program.cs#L31
 func (f *FileInfo) IsCombinedBeatmap() bool {
 	return f != nil && f.FileExtension() == "osc"
 }
