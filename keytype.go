@@ -6,15 +6,15 @@ import "errors"
 type KeyType string
 
 const (
-	KeyTypeOSZ2 KeyType = "osz2"
-	KeyTypeOSF2 KeyType = "osf2"
+	KeyTypeOsz2 KeyType = "osz2"
+	KeyTypeOsf2 KeyType = "osf2"
 )
 
 func (key KeyType) Generate(metadata map[MetaType]string) ([]byte, error) {
 	switch key {
 	// Regular .osz2 files, mainly used for beatmap submission
 	// Requires: Creator & BeatmapSetID metadata fields
-	case KeyTypeOSZ2:
+	case KeyTypeOsz2:
 		creator, okCreator := metadata[Creator]
 		beatmapSetID, okBeatmapSetID := metadata[BeatmapSetID]
 		if !okCreator || !okBeatmapSetID {
@@ -24,7 +24,7 @@ func (key KeyType) Generate(metadata map[MetaType]string) ([]byte, error) {
 		return ComputeHashBytesRaw([]byte(seed)), nil
 	// .osf2 files, used for beatmap packages inside osu!stream
 	// Requires: Title & Artist metadata fields
-	case KeyTypeOSF2:
+	case KeyTypeOsf2:
 		title, okTitle := metadata[Title]
 		artist, okArtist := metadata[Artist]
 		if !okTitle || !okArtist {

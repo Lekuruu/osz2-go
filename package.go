@@ -45,7 +45,7 @@ type Package struct {
 
 // NewPackage creates a new osz2 package from a reader
 func NewPackage(r io.ReadSeeker, metadataOnly bool) (*Package, error) {
-	return NewPackageWithKeyType(r, metadataOnly, KeyTypeOSZ2)
+	return NewPackageWithKeyType(r, metadataOnly, KeyTypeOsz2)
 }
 
 // NewPackageWithKeyType creates a new package from a reader with a specific key derivation
