@@ -73,6 +73,36 @@ func NewPackageWithKeyType(r io.ReadSeeker, metadataOnly bool, keyType KeyType) 
 	return p, nil
 }
 
+// NewPackageFromFile reads a package directly from a file path.
+func NewPackageFromFile(path string, metadataOnly bool, keyType KeyType) (*Package, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return NewPackageWithKeyType(f, metadataOnly, keyType)
+}
+
+// NewPackageFromBytes reads a package from raw bytes.
+func NewPackageFromBytes(data []byte, metadataOnly bool, keyType KeyType) (*Package, error) {
+	return NewPackageWithKeyType(bytes.NewReader(data), metadataOnly, keyType)
+}
+
+// NewEmptyPackage creates an editable package without reading from a source file.
+func NewEmptyPackage(keyType KeyType) *Package {
+	return &Package{
+		Metadata:  make(map[MetaType]string),
+		FileInfos: make(map[string]*FileInfo),
+		Files:     make(map[string][]byte),
+		FileNames: make(map[string]int32),
+		FileIDs:   make(map[int32]string),
+		Version:   0,
+		IV:        make([]byte, 16),
+		KeyType:   keyType,
+	}
+}
+
 // read reads the osz2 package data
 func (p *Package) read(r io.ReadSeeker) error {
 	// Read identifier (magic number)
