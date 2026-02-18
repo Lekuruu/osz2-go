@@ -4,29 +4,29 @@ package osz2
 type MetaType int16
 
 const (
-	Title MetaType = iota
-	Artist
-	Creator
-	Version
-	Source
-	Tags
-	VideoDataOffset
-	VideoDataLength
-	VideoHash
-	BeatmapSetID
-	Genre
-	Language
-	TitleUnicode
-	ArtistUnicode
-	Difficulty
-	PreviewTime
-	ArtistFullName
-	ArtistTwitter
-	SourceUnicode
-	ArtistURL
-	Revision
-	PackID
-	Unknown MetaType = 9999
+	Title           MetaType = 0
+	Artist          MetaType = 1
+	Creator         MetaType = 2
+	Version         MetaType = 3
+	Source          MetaType = 4
+	Tags            MetaType = 5
+	VideoDataOffset MetaType = 6
+	VideoDataLength MetaType = 7
+	VideoHash       MetaType = 8
+	BeatmapSetID    MetaType = 9
+	Genre           MetaType = 10
+	Language        MetaType = 11
+	TitleUnicode    MetaType = 12
+	ArtistUnicode   MetaType = 13
+	Unknown         MetaType = 9999
+	Difficulty      MetaType = 10000
+	PreviewTime     MetaType = 10001
+	ArtistFullName  MetaType = 10002
+	ArtistTwitter   MetaType = 10003
+	SourceUnicode   MetaType = 10004
+	ArtistURL       MetaType = 10005
+	Revision        MetaType = 10006
+	PackID          MetaType = 10007
 )
 
 // String returns the string representation of MetaType
