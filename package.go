@@ -73,11 +73,17 @@ func (p *Package) read(r io.ReadSeeker) error {
 		return errors.New("file is not valid .osz2 package")
 	}
 
-	// Skip unused version byte
-	r.Seek(1, io.SeekCurrent)
+	// Read unused version byte
+	version := make([]byte, 1)
+	if _, err := r.Read(version); err != nil {
+		return err
+	}
+	p.Version = version[0]
 
-	// Skip unused IV
-	r.Seek(16, io.SeekCurrent)
+	// Read IV
+	if _, err := r.Read(p.IV); err != nil {
+		return err
+	}
 
 	// Read hashes of .osu parts
 	p.MetaDataHash = make([]byte, 16)
@@ -206,6 +212,10 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 		return err
 	}
 	xtea.Decrypt(plain, 0, 64)
+
+	if !bytes.Equal(plain, knownPlain) {
+		return errors.New("invalid encryption key")
+	}
 
 	// Read encrypted length
 	var length int32
