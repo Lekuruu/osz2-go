@@ -2,6 +2,7 @@ package osz2
 
 import (
 	"crypto/md5"
+	"strings"
 )
 
 // ComputeHash computes MD5 hash of a string
@@ -12,11 +13,11 @@ func ComputeHash(str string) string {
 // ComputeHashBytes computes MD5 hash of byte array and returns hex string
 func ComputeHashBytes(data []byte) string {
 	hash := md5.Sum(data)
-	result := ""
+	var result strings.Builder
 	for _, b := range hash[:] {
-		result += byteToHex(b)
+		result.WriteString(byteToHex(b))
 	}
-	return result
+	return result.String()
 }
 
 // ComputeHashBytesRaw computes MD5 hash and returns raw bytes

@@ -15,7 +15,7 @@ func (sc *SimpleCryptor) EncryptBytes(buf []byte) {
 	byteKey := uint32SliceToByteSlice(sc.key)
 	var prevEncrypted byte = 0
 
-	for i := 0; i < len(buf); i++ {
+	for i := range buf {
 		// Handle modulo properly for potentially negative values
 		sum := int(buf[i]) + int(byteKey[i%16]>>2)
 		buf[i] = byte((sum%256 + 256) % 256)
@@ -32,7 +32,7 @@ func (sc *SimpleCryptor) DecryptBytes(buf []byte) {
 	byteKey := uint32SliceToByteSlice(sc.key)
 	var prevEncrypted byte = 0
 
-	for i := 0; i < len(buf); i++ {
+	for i := range buf {
 		tmpE := buf[i]
 		buf[i] = rotateLeft(buf[i], byte((^uint32(prevEncrypted))%7))
 		buf[i] ^= rotateLeft(byteKey[15-i%16], byte((int(prevEncrypted)+len(buf)-i)%7))

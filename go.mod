@@ -1,3 +1,3 @@
 module github.com/Lekuruu/osz2-go
 
-go 1.21
+go 1.26.0

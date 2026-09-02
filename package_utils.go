@@ -115,7 +115,7 @@ func write7BitEncodedInt(buf *bytes.Buffer, value int) {
 
 func bytesToUint32Array(data []byte) []uint32 {
 	result := make([]uint32, len(data)/4)
-	for i := 0; i < len(result); i++ {
+	for i := range result {
 		result[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 	return result
@@ -123,15 +123,14 @@ func bytesToUint32Array(data []byte) []uint32 {
 
 func computeOszHash(buffer []byte, pos int, swap byte) []byte {
 	// Make a copy to avoid modifying the original
-	buf := make([]byte, len(buffer))
-	copy(buf, buffer)
+	buf := bytes.Clone(buffer)
 
 	// Ensure pos is within bounds
 	if pos >= len(buf) {
 		// If position is out of bounds, just compute hash without swapping
 		hash := ComputeHashBytesRaw(buf)
 
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			tmp := hash[i]
 			hash[i] = hash[i+8]
 			hash[i+8] = tmp
@@ -145,7 +144,7 @@ func computeOszHash(buffer []byte, pos int, swap byte) []byte {
 	hash := ComputeHashBytesRaw(buf)
 	buf[pos] ^= swap // restore original
 
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tmp := hash[i]
 		hash[i] = hash[i+8]
 		hash[i+8] = tmp

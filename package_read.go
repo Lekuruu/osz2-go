@@ -88,7 +88,7 @@ func (p *Package) readMetadata(r io.ReadSeeker) error {
 	buf.WriteByte(byte(count >> 24))
 
 	// Read metadata
-	for i := int32(0); i < count; i++ {
+	for range count {
 		var metaType int16
 		if err := binary.Read(r, binary.LittleEndian, &metaType); err != nil {
 			return err
@@ -124,7 +124,7 @@ func (p *Package) readFileNames(r io.ReadSeeker) error {
 	}
 
 	// Read all maps in .osz2 and add them to dictionaries
-	for i := int32(0); i < mapsCount; i++ {
+	for range mapsCount {
 		fileName, err := readString(r)
 		if err != nil {
 			return err
@@ -227,7 +227,7 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 		return err
 	}
 
-	for i := int32(0); i < count; i++ {
+	for i := range count {
 		fileName, err := readStringFromBuffer(r)
 		if err != nil {
 			return err
@@ -316,10 +316,7 @@ func readEncryptedEntryContent(reader io.ReadSeeker, offset int, key []byte, buf
 		return 0, err
 	}
 
-	count := len(buffer)
-	if count > entryLength {
-		count = entryLength
-	}
+	count := min(len(buffer), entryLength)
 
 	if count == 0 {
 		return 0, io.EOF

@@ -18,7 +18,7 @@ func (w *XXTEAWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	encrypted := append([]byte(nil), p...)
+	encrypted := bytes.Clone(p)
 	w.xxtea.Encrypt(encrypted, 0, len(encrypted))
 	return w.buf.Write(encrypted)
 }

@@ -34,7 +34,7 @@ func (x *XTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool) 
 	leftOver := count % 8
 
 	// Process full 8-byte words
-	for i := 0; i < fullWordCount; i++ {
+	for i := range fullWordCount {
 		offset := bufStart + i*8
 		v0 := binary.LittleEndian.Uint32(buffer[offset:])
 		v1 := binary.LittleEndian.Uint32(buffer[offset+4:])
@@ -64,7 +64,7 @@ func (x *XTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool) 
 // encryptWord encrypts a single 64-bit word (two 32-bit values)
 func (x *XTEA) encryptWord(v0, v1 uint32) (uint32, uint32) {
 	var sum uint32 = 0
-	for i := uint32(0); i < TEARounds; i++ {
+	for range TEARounds {
 		v0 += (((v1 << 4) ^ (v1 >> 5)) + v1) ^ (sum + x.key[sum&3])
 		sum += TEADelta
 		v1 += (((v0 << 4) ^ (v0 >> 5)) + v0) ^ (sum + x.key[(sum>>11)&3])
@@ -76,11 +76,11 @@ func (x *XTEA) encryptWord(v0, v1 uint32) (uint32, uint32) {
 func (x *XTEA) decryptWord(v0, v1 uint32) (uint32, uint32) {
 	// Calculate sum with proper overflow handling
 	sum := uint32(0)
-	for i := uint32(0); i < TEARounds; i++ {
+	for range TEARounds {
 		sum += TEADelta
 	}
 
-	for i := uint32(0); i < TEARounds; i++ {
+	for range TEARounds {
 		v1 -= (((v0 << 4) ^ (v0 >> 5)) + v0) ^ (sum + x.key[(sum>>11)&3])
 		sum -= TEADelta
 		v0 -= (((v1 << 4) ^ (v1 >> 5)) + v1) ^ (sum + x.key[sum&3])

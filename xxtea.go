@@ -40,7 +40,7 @@ func (xx *XXTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool
 	leftOver := count % MaxBytes
 
 	// Process full MaxBytes chunks - each chunk is MaxWords (16) uint32s
-	for i := 0; i < fullWordCount; i++ {
+	for i := range fullWordCount {
 		offset := bufStart + i*MaxBytes
 		if encrypt {
 			xx.encryptFixedWordArray(buffer[offset : offset+MaxBytes])
@@ -89,7 +89,7 @@ func (xx *XXTEA) encryptWords(data []byte) {
 
 	// Convert bytes to uint32 array
 	v := make([]uint32, xx.n)
-	for i := uint32(0); i < xx.n; i++ {
+	for i := range xx.n {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 
@@ -114,7 +114,7 @@ func (xx *XXTEA) encryptWords(data []byte) {
 	}
 
 	// Convert back to bytes
-	for i := uint32(0); i < xx.n; i++ {
+	for i := range xx.n {
 		binary.LittleEndian.PutUint32(data[i*4:], v[i])
 	}
 }
@@ -127,7 +127,7 @@ func (xx *XXTEA) decryptWords(data []byte) {
 
 	// Convert bytes to uint32 array
 	v := make([]uint32, xx.n)
-	for i := uint32(0); i < xx.n; i++ {
+	for i := range xx.n {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 
@@ -157,7 +157,7 @@ func (xx *XXTEA) decryptWords(data []byte) {
 	}
 
 	// Convert back to bytes
-	for i := uint32(0); i < xx.n; i++ {
+	for i := range xx.n {
 		binary.LittleEndian.PutUint32(data[i*4:], v[i])
 	}
 }
@@ -170,7 +170,7 @@ func (xx *XXTEA) encryptFixedWordArray(data []byte) {
 
 	// Convert bytes to uint32 array
 	v := make([]uint32, MaxWords)
-	for i := 0; i < MaxWords; i++ {
+	for i := range MaxWords {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 
@@ -195,7 +195,7 @@ func (xx *XXTEA) encryptFixedWordArray(data []byte) {
 	}
 
 	// Convert back to bytes
-	for i := 0; i < MaxWords; i++ {
+	for i := range MaxWords {
 		binary.LittleEndian.PutUint32(data[i*4:], v[i])
 	}
 }
@@ -208,7 +208,7 @@ func (xx *XXTEA) decryptFixedWordArray(data []byte) {
 
 	// Convert bytes to uint32 array
 	v := make([]uint32, MaxWords)
-	for i := 0; i < MaxWords; i++ {
+	for i := range MaxWords {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 
@@ -238,7 +238,7 @@ func (xx *XXTEA) decryptFixedWordArray(data []byte) {
 	}
 
 	// Convert back to bytes
-	for i := 0; i < MaxWords; i++ {
+	for i := range MaxWords {
 		binary.LittleEndian.PutUint32(data[i*4:], v[i])
 	}
 }

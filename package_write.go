@@ -2,13 +2,14 @@ package osz2
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,13 +42,16 @@ func (p *Package) Export() ([]byte, error) {
 		return nil, errors.New("cannot export package without file content")
 	}
 
-	sort.Slice(files, func(i, j int) bool {
-		iVideo := files[i].IsVideo()
-		jVideo := files[j].IsVideo()
-		if iVideo != jVideo {
-			return !iVideo
+	slices.SortFunc(files, func(a, b *FileInfo) int {
+		aVideo := a.IsVideo()
+		bVideo := b.IsVideo()
+		if aVideo != bVideo {
+			if aVideo {
+				return 1
+			}
+			return -1
 		}
-		return files[i].FileName < files[j].FileName
+		return cmp.Compare(a.FileName, b.FileName)
 	})
 
 	if err := p.processVideoMetadata(files); err != nil {
@@ -82,7 +86,7 @@ func (p *Package) Export() ([]byte, error) {
 		}
 	}
 	encodedIV := make([]byte, 16)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		encodedIV[i] = iv[i] ^ bodyHash[i]
 	}
 
@@ -113,8 +117,7 @@ func (p *Package) Export() ([]byte, error) {
 		}
 	}
 
-	magic := make([]byte, len(knownPlain))
-	copy(magic, knownPlain)
+	magic := bytes.Clone(knownPlain)
 	xtea := NewXTEA(keyArray)
 	xtea.Encrypt(magic, 0, len(magic))
 	output.Write(magic)

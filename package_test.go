@@ -182,8 +182,7 @@ func BenchmarkParsePackage(b *testing.B) {
 		b.Skip("Test file does not exist")
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		file, err := os.Open(testFile)
 		if err != nil {
 			b.Fatalf("Failed to open file: %v", err)
@@ -208,8 +207,7 @@ func BenchmarkParseMetadataOnly(b *testing.B) {
 		return
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		file, err := os.Open(testFile)
 		if err != nil {
 			b.Fatalf("Failed to open file: %v", err)
