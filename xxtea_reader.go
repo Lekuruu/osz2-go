@@ -41,3 +41,11 @@ func (x *XXTEAReader) ReadByte() (byte, error) {
 	}
 	return b[0], nil
 }
+
+// Len returns the number of encrypted bytes still available when the underlying reader provides it
+func (x *XXTEAReader) Len() int {
+	if reader, ok := x.reader.(interface{ Len() int }); ok {
+		return reader.Len()
+	}
+	return -1
+}
