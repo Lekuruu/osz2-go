@@ -12,10 +12,3 @@ var knownPlain = []byte{
 	0xFE, 0x96, 0xA6, 0x94, 0x99, 0xA7, 0x90, 0xE4,
 	0x68, 0xBF, 0xC6, 0x97, 0x5B, 0x1B, 0x5E, 0x7F,
 }
-
-// osu! officially only uses ".avi", ".flv" and ".mpg" for
-// video files, so lets hope this won't cause any issues
-var videoFileExtensions = map[string]struct{}{
-	"wmv": {}, "flv": {}, "avi": {}, "m4v": {}, "mpg": {}, "mov": {},
-	"webm": {}, "ogv": {}, "mpeg": {}, "3gp": {}, "mkv": {}, "mp4": {},
-}
