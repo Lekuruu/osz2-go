@@ -1,17 +1,15 @@
-package osz2
+package crypto
 
-// SimpleCryptor implements the simple encryption used in osz2
 type SimpleCryptor struct {
 	key []uint32
 }
 
-// NewSimpleCryptor creates a new SimpleCryptor
 func NewSimpleCryptor(key []uint32) *SimpleCryptor {
 	return &SimpleCryptor{key: key}
 }
 
 // EncryptBytes encrypts bytes in place
-func (sc *SimpleCryptor) EncryptBytes(buf []byte) {
+func (sc *SimpleCryptor) encryptBytes(buf []byte) {
 	byteKey := uint32SliceToByteSlice(sc.key)
 	var prevEncrypted byte = 0
 
@@ -28,7 +26,7 @@ func (sc *SimpleCryptor) EncryptBytes(buf []byte) {
 }
 
 // DecryptBytes decrypts bytes in place
-func (sc *SimpleCryptor) DecryptBytes(buf []byte) {
+func (sc *SimpleCryptor) decryptBytes(buf []byte) {
 	byteKey := uint32SliceToByteSlice(sc.key)
 	var prevEncrypted byte = 0
 

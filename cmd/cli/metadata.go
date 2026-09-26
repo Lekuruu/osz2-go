@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"time"
 
-	"github.com/Lekuruu/osz2-go"
+	"github.com/Lekuruu/osz2-go/pkg/osz2"
 )
 
-// Metadata represents the JSON structure for metadata output
+// Metadata represents the JSON structure for metadata output.
 type Metadata struct {
 	Title         string            `json:"title,omitempty"`
 	Artist        string            `json:"artist,omitempty"`
@@ -27,40 +28,39 @@ type Metadata struct {
 	Hashes        HashData          `json:"hashes"`
 }
 
-// FileMetadata represents file information in JSON format
+// FileMetadata represents file information in JSON format.
 type FileMetadata struct {
 	FileName     string    `json:"file_name"`
-	Size         int32     `json:"size"`
+	Size         int64     `json:"size"`
 	Hash         string    `json:"hash"`
 	DateCreated  time.Time `json:"date_created"`
 	DateModified time.Time `json:"date_modified"`
-	BeatmapID    int32     `json:"beatmap_id,omitempty"`
+	BeatmapID    *int32    `json:"beatmap_id,omitempty"`
 }
 
-// HashData represents hash information
+// HashData represents hash information.
 type HashData struct {
 	MetaDataHash string `json:"metadata_hash"`
 	FileInfoHash string `json:"file_info_hash"`
 	FullBodyHash string `json:"full_body_hash"`
 }
 
-func buildMetadata(pkg *osz2.Package) *Metadata {
+func buildMetadata(reader *osz2.Reader) (*Metadata, error) {
+	packageInfo := reader.Info()
 	metadata := &Metadata{
 		Attributes: make(map[string]string),
 		Files:      make([]FileMetadata, 0),
 		Hashes: HashData{
-			MetaDataHash: fmt.Sprintf("%x", pkg.MetaDataHash),
-			FileInfoHash: fmt.Sprintf("%x", pkg.FileInfoHash),
-			FullBodyHash: fmt.Sprintf("%x", pkg.FullBodyHash),
+			MetaDataHash: fmt.Sprintf("%x", packageInfo.MetadataHash),
+			FileInfoHash: fmt.Sprintf("%x", packageInfo.FileInfoHash),
+			FullBodyHash: fmt.Sprintf("%x", packageInfo.BodyHash),
 		},
 	}
 
-	// Convert all metadata to string map
-	for metaType, value := range pkg.Metadata {
+	for metaType, value := range reader.Metadata() {
 		key := metaType.String()
 		metadata.Attributes[key] = value
 
-		// Also populate specific fields
 		switch metaType {
 		case osz2.Title:
 			metadata.Title = value
@@ -91,23 +91,34 @@ func buildMetadata(pkg *osz2.Package) *Metadata {
 		}
 	}
 
-	// Add file information
-	for fileName, fileInfo := range pkg.FileInfos {
-		fileMeta := FileMetadata{
-			FileName:     fileName,
-			Size:         fileInfo.Size,
-			DateCreated:  fileInfo.DateCreated,
-			DateModified: fileInfo.DateModified,
-			Hash:         fmt.Sprintf("%x", fileInfo.Hash),
+	err := fs.WalkDir(reader, ".", func(filename string, directoryEntry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if directoryEntry.IsDir() {
+			return nil
 		}
 
-		// Add beatmap ID if available
-		if beatmapID, ok := pkg.FileNames[fileName]; ok {
-			fileMeta.BeatmapID = beatmapID
+		entry, err := reader.Entry(filename)
+		if err != nil {
+			return err
 		}
 
-		metadata.Files = append(metadata.Files, fileMeta)
+		fileMetadata := FileMetadata{
+			FileName:     filename,
+			Size:         entry.Size(),
+			DateCreated:  entry.CreatedAt(),
+			DateModified: entry.ModTime(),
+			Hash:         fmt.Sprintf("%x", entry.Hash()),
+		}
+		if beatmapID, ok := entry.BeatmapID(); ok {
+			fileMetadata.BeatmapID = &beatmapID
+		}
+		metadata.Files = append(metadata.Files, fileMetadata)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return metadata
+	return metadata, nil
 }

@@ -1,10 +1,9 @@
-package osz2
+package crypto
 
 import (
 	"encoding/binary"
 )
 
-// XXTEA implements the Corrected Block TEA algorithm
 type XXTEA struct {
 	key           []uint32
 	simpleCryptor *SimpleCryptor
@@ -16,7 +15,6 @@ const (
 	MaxBytes = MaxWords * 4
 )
 
-// NewXXTEA creates a new XXTEA instance
 func NewXXTEA(key []uint32) *XXTEA {
 	return &XXTEA{
 		key:           key,
@@ -39,7 +37,7 @@ func (xx *XXTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool
 	fullWordCount := count / MaxBytes
 	leftOver := count % MaxBytes
 
-	// Process full MaxBytes chunks - each chunk is MaxWords (16) uint32s
+	// Process full 64-byte chunks. Each chunk contains 16 uint32 values.
 	for i := range fullWordCount {
 		offset := bufStart + i*MaxBytes
 		if encrypt {
@@ -75,9 +73,9 @@ func (xx *XXTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool
 	// When n <= 1, this processes ALL leftover bytes starting from leftoverStart
 	remainingBuf := buffer[leftoverStart : leftoverStart+leftOver]
 	if encrypt {
-		xx.simpleCryptor.EncryptBytes(remainingBuf)
+		xx.simpleCryptor.encryptBytes(remainingBuf)
 	} else {
-		xx.simpleCryptor.DecryptBytes(remainingBuf)
+		xx.simpleCryptor.decryptBytes(remainingBuf)
 	}
 }
 
@@ -88,7 +86,8 @@ func (xx *XXTEA) encryptWords(data []byte) {
 	}
 
 	// Convert bytes to uint32 array
-	v := make([]uint32, xx.n)
+	var storage [MaxWords]uint32
+	v := storage[:xx.n]
 	for i := range xx.n {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
@@ -126,7 +125,8 @@ func (xx *XXTEA) decryptWords(data []byte) {
 	}
 
 	// Convert bytes to uint32 array
-	v := make([]uint32, xx.n)
+	var storage [MaxWords]uint32
+	v := storage[:xx.n]
 	for i := range xx.n {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
@@ -162,14 +162,14 @@ func (xx *XXTEA) decryptWords(data []byte) {
 	}
 }
 
-// encryptFixedWordArray encrypts a fixed block of MaxWords using XXTEA
+// encryptFixedWordArray encrypts one fixed 16-word block using XXTEA.
 func (xx *XXTEA) encryptFixedWordArray(data []byte) {
 	if len(data) != MaxBytes {
 		return
 	}
 
 	// Convert bytes to uint32 array
-	v := make([]uint32, MaxWords)
+	var v [MaxWords]uint32
 	for i := range MaxWords {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
@@ -200,14 +200,14 @@ func (xx *XXTEA) encryptFixedWordArray(data []byte) {
 	}
 }
 
-// decryptFixedWordArray decrypts a fixed block of MaxWords using XXTEA
+// decryptFixedWordArray decrypts one fixed 16-word block using XXTEA.
 func (xx *XXTEA) decryptFixedWordArray(data []byte) {
 	if len(data) != MaxBytes {
 		return
 	}
 
 	// Convert bytes to uint32 array
-	v := make([]uint32, MaxWords)
+	var v [MaxWords]uint32
 	for i := range MaxWords {
 		v[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}

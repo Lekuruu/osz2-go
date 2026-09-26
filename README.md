@@ -5,22 +5,13 @@
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lekuruu/osz2-go/.github%2Fworkflows%2Fbuild.yml)](https://github.com/Lekuruu/osz2-go/actions/workflows/build.yml)
 [![GitHub License](https://img.shields.io/github/license/Lekuruu/osz2-go)](https://github.com/Lekuruu/osz2-go/blob/main/LICENSE)
 
-osz2-go is a go library for reading and extracting osz2 files. It provides functionality to parse, decrypt, and extract osz2 beatmap packages, using [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
+osz2-go is a Go library for reading and writing `.osz2` and `.osf2` packages. The format work uses [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
 
-## Features
+A package [`Reader`](package.go) is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. A package [`Writer`](package_write.go) can export packages from any [`fs.FS`](https://pkg.go.dev/io/fs#FS) to a destination writer (also without loading all source files into memory).
 
-- Parse osz2 & osf2 package files
-    - Extract metadata (artist, title, difficulty, etc.)
-    - Decrypt XXTEA-encrypted content
-    - Extract all files from the package, including file info
-- Edit package contents in memory
-- Export packages back to `.osz2` / `.osf2`
-- Create a regular `.osz` package from decrypted contents
-- Command-line interface for easy extraction
+This repository also provides a separate CLI application for extracting osz2 / osf2 packages. View the [readme file](cmd/cli/README.md) for usage instructions.
 
 ## Usage
-
-This repository provides a separate CLI application, which you can use to extract osz2 packages. View the [readme file](https://github.com/Lekuruu/osz2-go/blob/main/cmd/cli/README.md) to learn more.
 
 Here is an example of how to use osz2-go as a library:
 
@@ -32,43 +23,107 @@ go get github.com/Lekuruu/osz2-go
 package main
 
 import (
-    "fmt"
-    "os"
-    "github.com/Lekuruu/osz2-go"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+
+	"github.com/Lekuruu/osz2-go/pkg/osz2"
 )
 
 func main() {
-    file, err := os.Open("beatmap.osz2")
-    if err != nil {
-        panic(err)
-    }
-    defer file.Close()
+	// Opening the package will return a corresponding filesystem reader
+	// You can also use `osz2.NewReader(...)`, which cannot be Close()'d however
+	reader, err := osz2.OpenReader("beatmap.osz2", osz2.KeyTypeOsz2)
+	if err != nil {
+		panic(err)
+	}
+	defer reader.Close()
 
-    // Parse package (metadataOnly: false to read all files)
-    pkg, err := osz2.NewPackage(file, false)
-    if err != nil {
-        panic(err)
-    }
-    // NOTE: To read osu!stream packages, i.e. `.osf2`
-    // pkg, err := osz2.NewPackageWithKeyType(file, false, osz2.KeyTypeOSF2)
+	// Access metadata
+	metadata := reader.Metadata()
+	fmt.Println("Title:", metadata[osz2.Title])
+	fmt.Println("Artist:", metadata[osz2.Artist])
 
-    // Access metadata
-    fmt.Println("Title:", pkg.Metadata[osz2.MetaTitle])
-    fmt.Println("Artist:", pkg.Metadata[osz2.MetaArtist])
+	// Standard io/fs helpers work as you'd expect
+	err = fs.WalkDir(reader, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		fmt.Println(name)
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
 
-    // Access files
-    for filename, content := range pkg.Files() {
-        fmt.Printf("File: %s, Size: %d bytes\n", filename, len(content))
-    }
+	// Open returns a fs.File interface that will
+	// decrypt the file on the fly as its being read
+	// You may also use `OpenEntry` to get
+	// access to a few more functions
+	file, err := reader.Open("audio.mp3")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
 
-    // Modify package contents
-    pkg.AddMetadata(osz2.Source, "my source")
-    pkg.AddFileFromDisk("new.osu", "/path/to/new.osu")
+	// idk, do whatever with this
+	// e.g. read a few bytes
+	header := make([]byte, 32)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		panic(err)
+	}
 
-    // Export edited package
-    data, err := pkg.Export()
-    if err != nil {
-        panic(err)
-    }
+	fmt.Printf("Audio header bytes: %x\n", header[:n])
 }
 ```
+
+Use `KeyTypeOsf2` instead when opening an osu!stream `.osf2` package.
+
+## Writing a package
+
+Here's an example of exporting an osz2 / osf2 package. The source filesystem must remain unchanged and its files must remain available until `Close()` finishes.
+
+```go
+func main() {
+	source := os.DirFS("/path/to/beatmap/folder/")
+
+	destination, err := os.Create("beatmap.osz2")
+	if err != nil {
+		panic(err)
+	}
+	defer destination.Close()
+
+	writer, err := osz2.NewWriter(destination)
+	if err != nil {
+		panic(err)
+	}
+	if err := writer.SetKey(osz2.KeyTypeOsz2); err != nil {
+		panic(err)
+	}
+	if err := writer.SetVersion(0); err != nil { // version never actually changed
+		panic(err)
+	}
+	if err := writer.SetMetadata(osz2.Creator, "Astronic"); err != nil {
+		panic(err)
+	}
+	if err := writer.SetMetadata(osz2.BeatmapSetID, "1280204"); err != nil {
+		panic(err)
+	}
+	if err := writer.SetFS(source); err != nil {
+		panic(err)
+	}
+	// Beatmap files without an assigned ID are written with ID "-1"
+	if err := writer.AssignBeatmapID("technoplanet - Juvenile.osu", 2659368); err != nil {
+		panic(err)
+	}
+	// Use `AssignTimes` when the package should store times
+	// other than those reported by the source filesystem
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+}
+```
+
+

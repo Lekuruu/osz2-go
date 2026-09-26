@@ -1,16 +1,14 @@
-package osz2
+package crypto
 
 import (
 	"encoding/binary"
 )
 
-// XTEA implements the Extended Tiny Encryption Algorithm
 type XTEA struct {
 	key           []uint32
 	simpleCryptor *SimpleCryptor
 }
 
-// NewXTEA creates a new XTEA instance
 func NewXTEA(key []uint32) *XTEA {
 	return &XTEA{
 		key:           key,
@@ -18,12 +16,10 @@ func NewXTEA(key []uint32) *XTEA {
 	}
 }
 
-// Decrypt decrypts data using XTEA
 func (x *XTEA) Decrypt(buffer []byte, start, count int) {
 	x.encryptDecrypt(buffer, start, count, false)
 }
 
-// Encrypt encrypts data using XTEA
 func (x *XTEA) Encrypt(buffer []byte, start, count int) {
 	x.encryptDecrypt(buffer, start, count, true)
 }
@@ -54,9 +50,9 @@ func (x *XTEA) encryptDecrypt(buffer []byte, bufStart, count int, encrypt bool) 
 		leftoverStart := bufStart + fullWordCount*8
 		leftoverBuf := buffer[leftoverStart : leftoverStart+leftOver]
 		if encrypt {
-			x.simpleCryptor.EncryptBytes(leftoverBuf)
+			x.simpleCryptor.encryptBytes(leftoverBuf)
 		} else {
-			x.simpleCryptor.DecryptBytes(leftoverBuf)
+			x.simpleCryptor.decryptBytes(leftoverBuf)
 		}
 	}
 }

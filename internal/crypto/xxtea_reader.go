@@ -1,16 +1,15 @@
-package osz2
+package crypto
 
 import (
 	"io"
 )
 
-// XXTEAReader provides streaming XXTEA decryption
 type XXTEAReader struct {
 	reader io.Reader
 	xxtea  *XXTEA
 }
 
-// NewXXTEAReader creates a new XXTEAReader
+// NewXXTEAReader creates a reader for the format's write-framed encryption.
 func NewXXTEAReader(reader io.Reader, key []uint32) *XXTEAReader {
 	return &XXTEAReader{
 		reader: reader,
@@ -18,7 +17,7 @@ func NewXXTEAReader(reader io.Reader, key []uint32) *XXTEAReader {
 	}
 }
 
-// Read reads data from the underlying reader and decrypts it
+// Read decrypts one frame read from the underlying reader.
 func (x *XXTEAReader) Read(p []byte) (n int, err error) {
 	// Read from underlying reader
 	bytesRead, err := x.reader.Read(p)
