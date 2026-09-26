@@ -54,7 +54,7 @@ func NewWriter(destination io.Writer) (*Writer, error) {
 }
 
 // SetVersion sets the package format version.
-// Must be called before AddFS.
+// Must be called before SetFS.
 func (w *Writer) SetVersion(version byte) error {
 	if err := w.checkConfigurable(); err != nil {
 		return err
@@ -64,7 +64,7 @@ func (w *Writer) SetVersion(version byte) error {
 }
 
 // SetKey selects the package key derivation scheme.
-// Must be called before AddFS.
+// Must be called before SetFS.
 func (w *Writer) SetKey(keyType KeyType) error {
 	if err := w.checkConfigurable(); err != nil {
 		return err
@@ -77,7 +77,7 @@ func (w *Writer) SetKey(keyType KeyType) error {
 }
 
 // SetMetadata sets a package metadata value.
-// Must be called before AddFS.
+// Must be called before SetFS.
 func (w *Writer) SetMetadata(metadataType MetaType, value string) error {
 	if err := w.checkConfigurable(); err != nil {
 		return err
@@ -96,7 +96,7 @@ func (w *Writer) AssignBeatmapID(name string, id int32) error {
 		return &fs.PathError{Op: "assign beatmap ID", Path: name, Err: fs.ErrInvalid}
 	}
 	if !w.indexed {
-		return errors.New("osz2: call AddFS before assigning beatmap IDs")
+		return errors.New("osz2: call SetFS before assigning beatmap IDs")
 	}
 
 	entry, ok := w.indexedEntry(name)
@@ -127,7 +127,7 @@ func (w *Writer) AssignTimes(name string, createdAt, modifiedAt time.Time) error
 		return &fs.PathError{Op: "assign times", Path: name, Err: fs.ErrInvalid}
 	}
 	if !w.indexed {
-		return errors.New("osz2: call AddFS before assigning entry times")
+		return errors.New("osz2: call SetFS before assigning entry times")
 	}
 
 	entry, ok := w.indexedEntry(name)
@@ -157,7 +157,7 @@ func (w *Writer) checkConfigurable() error {
 		return fs.ErrClosed
 	}
 	if w.indexed {
-		return errors.New("osz2: writer settings cannot change after AddFS")
+		return errors.New("osz2: writer settings cannot change after SetFS")
 	}
 	return nil
 }
