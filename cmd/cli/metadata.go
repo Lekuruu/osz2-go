@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"time"
 
-	"github.com/Lekuruu/osz2-go"
+	"github.com/Lekuruu/osz2-go/pkg/osz2"
 )
 
 // Metadata represents the JSON structure for metadata output.

@@ -16,7 +16,7 @@ func TestPackagesOsz2(t *testing.T) {
 	testFiles := []string{}
 
 	// Walk the tests directory to find .osz2 files
-	filepath.Walk("tests", func(path string, info os.FileInfo, err error) error {
+	filepath.Walk("../../tests", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -38,7 +38,7 @@ func TestPackagesOsf2(t *testing.T) {
 	testFiles := []string{}
 
 	// Walk the tests directory to find .osf2 files
-	filepath.Walk("tests", func(path string, info os.FileInfo, err error) error {
+	filepath.Walk("../../tests", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ func testPackage(t *testing.T, filename string, key KeyType) {
 }
 
 func TestPackageRoundTrip(t *testing.T) {
-	testFiles, err := filepath.Glob("tests/*.osz2")
+	testFiles, err := filepath.Glob("../../tests/*.osz2")
 	if err != nil {
 		t.Fatal(err)
 	}

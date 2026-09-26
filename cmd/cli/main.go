@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Lekuruu/osz2-go"
+	"github.com/Lekuruu/osz2-go/pkg/osz2"
 )
 
 func main() {
