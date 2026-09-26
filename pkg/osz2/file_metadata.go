@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"io/fs"
 	"path"
-	"strings"
 	"time"
 )
 
@@ -120,27 +119,25 @@ func (e *Entry) Extension() string {
 	if e == nil || e.isDir {
 		return ""
 	}
-	extension := strings.ToLower(path.Ext(strings.TrimSpace(e.path)))
-	return strings.TrimPrefix(extension, ".")
+	return extensionOf(e.path)
 }
 
 // IsBeatmap reports whether the entry is an .osu beatmap.
 func (e *Entry) IsBeatmap() bool {
-	return e.Extension() == "osu"
+	return e.Extension() == beatmapExtension
 }
 
 // IsCombinedBeatmap reports whether the entry is an .osc combined beatmap.
 // https://github.com/ppy/osu-stream/blob/master/BeatmapCombinator/Program.cs#L31
 func (e *Entry) IsCombinedBeatmap() bool {
-	return e.Extension() == "osc"
+	return e.Extension() == combinedBeatmapExtension
 }
 
 // IsVideo reports whether the entry is treated as a video file.
 func (e *Entry) IsVideo() bool {
-	_, ok := videoFileExtensions[e.Extension()]
-	return ok
+	return isVideoExtension(e.Extension())
 }
 
 func (e *Entry) isBeatmapFile() bool {
-	return e.IsBeatmap() || e.IsCombinedBeatmap()
+	return isBeatmapFileExtension(e.Extension())
 }
