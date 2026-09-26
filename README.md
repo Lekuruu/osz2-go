@@ -5,9 +5,9 @@
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lekuruu/osz2-go/.github%2Fworkflows%2Fbuild.yml)](https://github.com/Lekuruu/osz2-go/actions/workflows/build.yml)
 [![GitHub License](https://img.shields.io/github/license/Lekuruu/osz2-go)](https://github.com/Lekuruu/osz2-go/blob/main/LICENSE)
 
-osz2-go is a Go library for reading <!-- & writing --> `.osz2` and `.osf2` packages. The format work uses [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
+osz2-go is a Go library for reading and writing `.osz2` and `.osf2` packages. The format work uses [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
 
-A package `Reader` is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. Writing packages through `fs.FS` interfaces is also planned for the near future.
+A package `Reader` is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. A package `Writer` can export packages from any `fs.FS` to a destination writer (also without loading all source files into memory).
 
 This repository also provides a separate CLI application for extracting osz2 / osf2 packages. View the [readme file](cmd/cli/README.md) for usage instructions.
 
@@ -81,4 +81,49 @@ func main() {
 
 Use `KeyTypeOsf2` instead when opening an osu!stream `.osf2` package.
 
-<!-- TODO: writing osz2 files -->
+## Writing a package
+
+Here's an example of exporting an osz2 / osf2 package. The source filesystem must remain unchanged and its files must remain available until `Close()` finishes.
+
+```go
+func main() {
+	source := os.DirFS("/path/to/beatmap/folder/")
+
+	destination, err := os.Create("beatmap.osz2")
+	if err != nil {
+		panic(err)
+	}
+	defer destination.Close()
+
+	writer, err := osz2.NewWriter(destination)
+	if err != nil {
+		panic(err)
+	}
+	if err := writer.SetKey(osz2.KeyTypeOsz2); err != nil {
+		panic(err)
+	}
+	if err := writer.SetVersion(0); err != nil { // version never actually changed
+		panic(err)
+	}
+	if err := writer.SetMetadata(osz2.Creator, "Astronic"); err != nil {
+		panic(err)
+	}
+	if err := writer.SetMetadata(osz2.BeatmapSetID, "1280204"); err != nil {
+		panic(err)
+	}
+	if err := writer.SetFS(source); err != nil {
+		panic(err)
+	}
+	// Beatmap files without an assigned ID are written with ID "-1"
+	if err := writer.AssignBeatmapID("technoplanet - Juvenile.osu", 2659368); err != nil {
+		panic(err)
+	}
+	// Use `AssignTimes` when the package should store times
+	// other than those reported by the source filesystem
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+}
+```
+
+
