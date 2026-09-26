@@ -7,7 +7,7 @@
 
 osz2-go is a Go library for reading and writing `.osz2` and `.osf2` packages. The format work uses [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
 
-A package `Reader` is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. A package `Writer` can export packages from any `fs.FS` to a destination writer (also without loading all source files into memory).
+A package [`Reader`](package.go) is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. A package [`Writer`](package_write.go) can export packages from any [`fs.FS`](https://pkg.go.dev/io/fs#FS) to a destination writer (also without loading all source files into memory).
 
 This repository also provides a separate CLI application for extracting osz2 / osf2 packages. View the [readme file](cmd/cli/README.md) for usage instructions.
 
