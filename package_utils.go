@@ -1,13 +1,11 @@
 package osz2
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -33,131 +31,76 @@ func readString(r io.Reader) (string, error) {
 }
 
 func writeString(w io.Writer, s string) error {
-	var length bytes.Buffer
-	write7BitEncodedInt(&length, len(s))
-	if _, err := w.Write(length.Bytes()); err != nil {
+	if err := write7BitEncodedInt(w, len(s)); err != nil {
 		return err
 	}
 	if len(s) == 0 {
 		return nil
 	}
-	_, err := io.WriteString(w, s)
+	_, err := writeFull(w, []byte(s))
 	return err
 }
 
-func readStringFromBuffer(r io.Reader) (string, error) {
-	length, err := read7BitEncodedIntFromBuffer(r)
-	if err != nil {
-		return "", err
-	}
+func writeFull(w io.Writer, p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if n < 0 || n > len(p) {
+			return written, errors.New("writer returned an invalid byte count")
+		}
 
-	if length == 0 {
-		return "", nil
+		written += n
+		p = p[n:]
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrShortWrite
+		}
 	}
-	if err := validateReadLength(r, length); err != nil {
-		return "", err
-	}
-
-	data := make([]byte, length)
-	_, err = io.ReadFull(r, data)
-	if err != nil {
-		return "", err
-	}
-
-	return string(data), nil
-}
-
-func writeStringToBuffer(buf *bytes.Buffer, s string) {
-	write7BitEncodedInt(buf, len(s))
-	buf.WriteString(s)
+	return written, nil
 }
 
 func read7BitEncodedInt(r io.Reader) (int, error) {
 	var result uint32
-	b := make([]byte, 1)
+	var encoded [1]byte
 	for i := range 5 {
-		if _, err := io.ReadFull(r, b); err != nil {
+		if _, err := io.ReadFull(r, encoded[:]); err != nil {
 			return 0, err
 		}
-		if i == 4 && b[0] > 0x07 {
+		if i == 4 && encoded[0] > 0x07 {
 			return 0, errors.New("7-bit encoded integer overflow")
 		}
 
-		result |= uint32(b[0]&0x7F) << (7 * i)
-		if b[0]&0x80 == 0 {
+		result |= uint32(encoded[0]&0x7f) << (7 * i)
+		if encoded[0]&0x80 == 0 {
 			return int(result), nil
 		}
 	}
 	return 0, errors.New("7-bit encoded integer overflow")
 }
 
-func read7BitEncodedIntFromBuffer(r io.Reader) (int, error) {
-	return read7BitEncodedInt(r)
-}
-
-func write7BitEncodedInt(buf *bytes.Buffer, value int) {
+func write7BitEncodedInt(w io.Writer, value int) error {
+	var encoded [1]byte
 	for value >= 0x80 {
-		buf.WriteByte(byte(value | 0x80))
+		encoded[0] = byte(value | 0x80)
+		if _, err := writeFull(w, encoded[:]); err != nil {
+			return err
+		}
 		value >>= 7
 	}
-	buf.WriteByte(byte(value))
+
+	encoded[0] = byte(value)
+	_, err := writeFull(w, encoded[:])
+	return err
 }
 
-func bytesToUint32Array(data []byte) []uint32 {
+func bytesToUint32s(data []byte) []uint32 {
 	result := make([]uint32, len(data)/4)
 	for i := range result {
 		result[i] = binary.LittleEndian.Uint32(data[i*4:])
 	}
 	return result
-}
-
-func computeOszHash(buffer []byte, pos int, swap byte) []byte {
-	// Make a copy to avoid modifying the original
-	buf := bytes.Clone(buffer)
-
-	// Ensure pos is within bounds
-	if pos >= len(buf) {
-		// If position is out of bounds, just compute hash without swapping
-		hash := ComputeHashBytesRaw(buf)
-
-		for i := range 8 {
-			tmp := hash[i]
-			hash[i] = hash[i+8]
-			hash[i+8] = tmp
-		}
-
-		hash[5] ^= 0x2d
-		return hash
-	}
-
-	buf[pos] ^= swap
-	hash := ComputeHashBytesRaw(buf)
-	buf[pos] ^= swap // restore original
-
-	for i := range 8 {
-		tmp := hash[i]
-		hash[i] = hash[i+8]
-		hash[i+8] = tmp
-	}
-
-	hash[5] ^= 0x2d
-	return hash
-}
-
-func computeBodyHash(data []byte, videoOffset, videoLength *int) []byte {
-	toHash := data
-	if videoOffset != nil && videoLength != nil {
-		start := *videoOffset
-		length := *videoLength
-		if start >= 0 && length >= 0 && start+length <= len(data) {
-			filtered := make([]byte, 0, len(data)-length)
-			filtered = append(filtered, data[:start]...)
-			filtered = append(filtered, data[start+length:]...)
-			toHash = filtered
-		}
-	}
-	pos := len(toHash) / 2
-	return computeOszHash(toHash, pos, 0x9F)
 }
 
 func convertFromDotNetBinary(value int64) time.Time {
@@ -200,21 +143,23 @@ func parseMetadataInt(metadata map[MetaType]string, key MetaType) (int, bool) {
 	return parsed, true
 }
 
-func sanitizeFilename(filename string) string {
-	replacer := strings.NewReplacer("<", "", ">", "", ":", "", "\"", "", "|", "", "?", "", "*", "")
-	cleaned := replacer.Replace(filename)
-	for strings.Contains(cleaned, "../") || strings.Contains(cleaned, "..\\") {
-		cleaned = strings.ReplaceAll(cleaned, "../", "")
-		cleaned = strings.ReplaceAll(cleaned, "..\\", "")
+func bodyHashExclusion(metadata map[MetaType]string, total int64) (start, length int64) {
+	startValue, hasStart := parseMetadataInt(metadata, VideoDataOffset)
+	lengthValue, hasLength := parseMetadataInt(metadata, VideoDataLength)
+	if !hasStart || !hasLength || startValue < 0 || lengthValue < 0 {
+		return -1, 0
 	}
-	return cleaned
+
+	start = int64(startValue)
+	length = int64(lengthValue)
+	if start+length > total {
+		return -1, 0
+	}
+	return start, length
 }
 
 func validateReadLength(r io.Reader, length int) error {
-	type HasLength interface{ Len() int } // yea idk what else to call this
-
-	// Try to determine length from reader Len() if provided
-	if remainingReader, ok := r.(HasLength); ok {
+	if remainingReader, ok := r.(interface{ Len() int }); ok {
 		remaining := remainingReader.Len()
 		if remaining >= 0 && length > remaining {
 			return fmt.Errorf("declared length %d exceeds remaining data %d", length, remaining)
@@ -222,7 +167,6 @@ func validateReadLength(r io.Reader, length int) error {
 		return nil
 	}
 
-	// Try to determine length from seeker
 	seeker, ok := r.(io.Seeker)
 	if !ok {
 		return nil

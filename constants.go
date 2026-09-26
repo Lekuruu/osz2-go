@@ -1,12 +1,5 @@
 package osz2
 
-const (
-	// TEADelta constant for TEA algorithm
-	TEADelta uint32 = 0x9e3779b9
-	// TEARounds number of rounds for TEA algorithm
-	TEARounds uint32 = 32
-)
-
 // "knownPlain" constant derived from FastRandom(1990)
 // https://github.com/ppy/osu-stream/blob/master/osu!stream/Helpers/osu!common/MapPackage.cs#L64
 var knownPlain = []byte{
@@ -18,15 +11,6 @@ var knownPlain = []byte{
 	0x42, 0x31, 0xAF, 0x0A, 0x0D, 0xAE, 0x00, 0xED,
 	0xFE, 0x96, 0xA6, 0x94, 0x99, 0xA7, 0x90, 0xE4,
 	0x68, 0xBF, 0xC6, 0x97, 0x5B, 0x1B, 0x5E, 0x7F,
-}
-
-// A list of all allowed file extensions in an .osz package
-// Did not cause any issues when testing on titanic
-var allowedFileExtensions = map[string]struct{}{
-	"osu": {}, "osz": {}, "osb": {}, "osk": {}, "png": {}, "mp3": {},
-	"wav": {}, "ogg": {}, "jpg": {}, "wmv": {}, "flv": {}, "flac": {},
-	"avi": {}, "ini": {}, "m4v": {}, "mpg": {}, "mov": {}, "webm": {},
-	"ogv": {}, "mpeg": {}, "3gp": {}, "mkv": {}, "mp4": {}, "jpeg": {},
 }
 
 // osu! officially only uses ".avi", ".flv" and ".mpg" for

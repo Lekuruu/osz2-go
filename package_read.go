@@ -2,378 +2,360 @@ package osz2
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path"
+	"strings"
+
+	"github.com/Lekuruu/osz2-go/internal/crypto"
 )
 
-func (p *Package) read(r io.ReadSeeker) error {
-	// Read identifier (magic number)
-	identifier := make([]byte, 3)
-	if _, err := io.ReadFull(r, identifier); err != nil {
+var packageMagic = [3]byte{0xec, 0x48, 0x4f}
+
+func (r *Reader) readIndex() error {
+	stream := io.NewSectionReader(r.source, 0, r.size)
+	var magic [3]byte
+	if _, err := io.ReadFull(stream, magic[:]); err != nil {
+		return fmt.Errorf("osz2: read package magic: %w", err)
+	}
+	if magic != packageMagic {
+		return errors.New("osz2: invalid package magic")
+	}
+
+	if err := binary.Read(stream, binary.LittleEndian, &r.info.Version); err != nil {
+		return fmt.Errorf("osz2: read version: %w", err)
+	}
+	if _, err := io.ReadFull(stream, r.info.EncodedIV[:]); err != nil {
+		return fmt.Errorf("osz2: read IV: %w", err)
+	}
+
+	if _, err := io.ReadFull(stream, r.info.MetadataHash[:]); err != nil {
+		return fmt.Errorf("osz2: read metadata hash: %w", err)
+	}
+	if _, err := io.ReadFull(stream, r.info.FileInfoHash[:]); err != nil {
+		return fmt.Errorf("osz2: read file-info hash: %w", err)
+	}
+	if _, err := io.ReadFull(stream, r.info.BodyHash[:]); err != nil {
+		return fmt.Errorf("osz2: read body hash: %w", err)
+	}
+
+	if err := r.readMetadata(stream); err != nil {
 		return err
 	}
 
-	// Check if given .osz2 package is valid
-	if len(identifier) < 3 ||
-		identifier[0] != 0xEC ||
-		identifier[1] != 0x48 ||
-		identifier[2] != 0x4F {
-		return errors.New("file is not valid .osz2 package")
-	}
-
-	// Read unused version byte
-	version := make([]byte, 1)
-	if _, err := io.ReadFull(r, version); err != nil {
-		return err
-	}
-	p.Version = version[0]
-
-	// Read IV
-	if _, err := io.ReadFull(r, p.IV); err != nil {
-		return err
-	}
-
-	// Read hashes of .osu parts
-	p.MetaDataHash = make([]byte, 16)
-	p.FileInfoHash = make([]byte, 16)
-	p.FullBodyHash = make([]byte, 16)
-
-	if _, err := io.ReadFull(r, p.MetaDataHash); err != nil {
-		return err
-	}
-	if _, err := io.ReadFull(r, p.FileInfoHash); err != nil {
-		return err
-	}
-	if _, err := io.ReadFull(r, p.FullBodyHash); err != nil {
-		return err
-	}
-
-	// Read metadata block
-	if err := p.readMetadata(r); err != nil {
-		return err
-	}
-
-	// Read file names mapping
-	if err := p.readFileNames(r); err != nil {
-		return err
-	}
-
-	// Generate key using selected key type
-	var err error
-	p.key, err = p.KeyType.Generate(p.Metadata)
+	beatmapIDs, err := readBeatmapIDs(stream)
 	if err != nil {
 		return err
 	}
 
-	if !p.metadataOnly {
-		return p.readFiles(r)
+	r.key, err = r.info.KeyType.Generate(r.metadata)
+	if err != nil {
+		return fmt.Errorf("osz2: derive encryption key: %w", err)
 	}
-
+	if err := r.readEntries(stream, beatmapIDs); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (p *Package) readMetadata(r io.ReadSeeker) error {
+func (r *Reader) readMetadata(stream io.ReadSeeker) error {
+	var raw bytes.Buffer
 	var count int32
-	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
-		return err
+
+	if err := binary.Read(stream, binary.LittleEndian, &count); err != nil {
+		return fmt.Errorf("osz2: read metadata count: %w", err)
 	}
 	if count < 0 {
-		return fmt.Errorf("invalid metadata count: %d", count)
+		return fmt.Errorf("osz2: invalid metadata count %d", count)
 	}
 
-	// Buffer to store data for hash verification
-	var buf bytes.Buffer
-	buf.WriteByte(byte(count))
-	buf.WriteByte(byte(count >> 8))
-	buf.WriteByte(byte(count >> 16))
-	buf.WriteByte(byte(count >> 24))
+	remaining, err := remainingBytes(stream)
+	if err != nil {
+		return err
+	}
+	if int64(count) > remaining/3 { // sanity check to verify that the reported count is correct
+		return fmt.Errorf("osz2: metadata count %d exceeds the remaining package data", count)
+	}
+	if err := binary.Write(&raw, binary.LittleEndian, count); err != nil {
+		return err
+	}
 
-	// Read metadata
 	for range count {
-		var metaType int16
-		if err := binary.Read(r, binary.LittleEndian, &metaType); err != nil {
-			return err
+		var metadataType int16
+		if err := binary.Read(stream, binary.LittleEndian, &metadataType); err != nil {
+			return fmt.Errorf("osz2: read metadata type: %w", err)
 		}
 
-		metaValue, err := readString(r)
+		value, err := readString(stream)
 		if err != nil {
-			return err
+			return fmt.Errorf("osz2: read metadata value: %w", err)
+		}
+		if _, exists := r.metadata[MetaType(metadataType)]; exists {
+			// TODO: Check how the c# version handles this, but I think this should be rejected
+			return fmt.Errorf("osz2: duplicate metadata type %d", metadataType)
 		}
 
-		// Store metadata if it's a valid type
-		p.Metadata[MetaType(metaType)] = metaValue
-
-		// Write to buffer for hash verification
-		buf.WriteByte(byte(metaType))
-		buf.WriteByte(byte(metaType >> 8))
-		writeStringToBuffer(&buf, metaValue)
+		r.metadata[MetaType(metadataType)] = value
+		if err := binary.Write(&raw, binary.LittleEndian, metadataType); err != nil {
+			return err
+		}
+		if err := writeString(&raw, value); err != nil {
+			return err
+		}
 	}
 
-	// Verify metadata hash
-	hash := computeOszHash(buf.Bytes(), int(count)*3, 0xa7)
-	if !bytes.Equal(hash, p.MetaDataHash) {
-		return errors.New("metadata hash mismatch")
-	}
+	// With the bytes we just collected we
+	// can now verify the metadata checksum
+	hash := computeOszHash(raw.Bytes(), int(count)*3, 0xa7)
 
+	if hash != r.info.MetadataHash {
+		return errors.New("osz2: metadata hash mismatch")
+	}
 	return nil
 }
 
-func (p *Package) readFileNames(r io.ReadSeeker) error {
-	var mapsCount int32
-	if err := binary.Read(r, binary.LittleEndian, &mapsCount); err != nil {
-		return err
+func readBeatmapIDs(stream io.ReadSeeker) (map[string]int32, error) {
+	var count int32
+	if err := binary.Read(stream, binary.LittleEndian, &count); err != nil {
+		return nil, fmt.Errorf("osz2: read beatmap count: %w", err)
 	}
-	if mapsCount < 0 {
-		return fmt.Errorf("invalid beatmap count: %d", mapsCount)
+	if count < 0 {
+		return nil, fmt.Errorf("osz2: invalid beatmap count %d", count)
 	}
 
-	// Read all maps in .osz2 and add them to dictionaries
-	for range mapsCount {
-		fileName, err := readString(r)
+	remaining, err := remainingBytes(stream)
+	if err != nil {
+		return nil, err
+	}
+	if int64(count) > remaining/5 { // sanity check to verify that the count is correct
+		return nil, fmt.Errorf("osz2: beatmap count %d exceeds the remaining package data", count)
+	}
+
+	result := make(map[string]int32, count)
+	reverse := make(map[int32]string, count)
+
+	for range count {
+		name, err := readString(stream)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("osz2: read beatmap filename: %w", err)
 		}
 
-		var beatmapID int32
-		if err := binary.Read(r, binary.LittleEndian, &beatmapID); err != nil {
-			return err
+		name, err = canonicalEntryPath(name)
+		if err != nil {
+			return nil, err
 		}
-		if _, exists := p.FileNames[fileName]; exists {
-			return fmt.Errorf("duplicate beatmap filename: %q", fileName)
+
+		var id int32
+		if err := binary.Read(stream, binary.LittleEndian, &id); err != nil {
+			return nil, fmt.Errorf("osz2: read beatmap ID: %w", err)
 		}
-		if beatmapID != -1 {
-			if owner, exists := p.FileIDs[beatmapID]; exists {
-				return fmt.Errorf("beatmap ID %d is assigned to both %q and %q", beatmapID, owner, fileName)
+		if _, exists := result[name]; exists {
+			return nil, fmt.Errorf("osz2: duplicate beatmap filename %q", name)
+		}
+
+		if id != -1 {
+			if owner, exists := reverse[id]; exists {
+				return nil, fmt.Errorf("osz2: beatmap ID %d is assigned to both %q and %q", id, owner, name)
 			}
-			p.FileIDs[beatmapID] = fileName
+			reverse[id] = name
 		}
-
-		p.FileNames[fileName] = beatmapID
-		if info, ok := p.FileInfos[fileName]; ok && info != nil {
-			info.BeatmapID = beatmapID
-		}
+		result[name] = id
 	}
-
-	return nil
+	return result, nil
 }
 
-func (p *Package) readFiles(r io.ReadSeeker) error {
-	// Convert key to uint32 array for XTEA
-	key := bytesToUint32Array(p.key)
-
-	// Create XTEA for reading magic bytes
-	xtea := NewXTEA(key)
-
-	// Read and decrypt magic encrypted bytes
-	plain := make([]byte, 64)
-	if _, err := io.ReadFull(r, plain); err != nil {
-		return err
-	}
-	xtea.Decrypt(plain, 0, 64)
-
-	if !bytes.Equal(plain, knownPlain) {
-		return errors.New("invalid encryption key")
+func (r *Reader) readEntries(stream io.ReadSeeker, beatmapIDs map[string]int32) error {
+	key := bytesToUint32s(r.key[:])
+	encryptedMagic := make([]byte, len(knownPlain))
+	if _, err := io.ReadFull(stream, encryptedMagic); err != nil {
+		return fmt.Errorf("osz2: read encrypted magic: %w", err)
 	}
 
-	// Read encrypted length
-	var length int32
-	if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
-		return err
+	crypto.NewXTEA(key).Decrypt(encryptedMagic, 0, len(encryptedMagic))
+	if !bytes.Equal(encryptedMagic, knownPlain) {
+		return errors.New("osz2: invalid encryption key")
 	}
 
-	// Decode length by encrypted length
-	for i := 0; i < 16; i += 2 {
-		length -= int32(p.FileInfoHash[i]) | (int32(p.FileInfoHash[i+1]) << 17)
+	var encodedLength int32
+	if err := binary.Read(stream, binary.LittleEndian, &encodedLength); err != nil {
+		return fmt.Errorf("osz2: read file-info length: %w", err)
+	}
+
+	length := int64(encodedLength)
+	for i := 0; i < md5.Size; i += 2 {
+		length -= int64(r.info.FileInfoHash[i]) | int64(r.info.FileInfoHash[i+1])<<17
 	}
 	if length < 0 {
-		return fmt.Errorf("invalid file info length: %d", length)
+		return fmt.Errorf("osz2: invalid file-info length %d", length)
 	}
 
-	fileInfoStart, err := r.Seek(0, io.SeekCurrent)
+	fileInfoStart, err := stream.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
-	totalSize, err := r.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-	if _, err := r.Seek(fileInfoStart, io.SeekStart); err != nil {
-		return err
-	}
-	if totalSize < fileInfoStart || int64(length) > totalSize-fileInfoStart {
-		return fmt.Errorf("file info length %d exceeds remaining package data", length)
+	if int64(length) > r.size-fileInfoStart {
+		return fmt.Errorf("osz2: file-info length %d exceeds remaining package data", length)
 	}
 
-	// Read all .osu files info
-	fileInfo := make([]byte, length)
-	if _, err := io.ReadFull(r, fileInfo); err != nil {
-		return err
+	encryptedInfo := make([]byte, int(length))
+	if _, err := io.ReadFull(stream, encryptedInfo); err != nil {
+		return fmt.Errorf("osz2: read file info: %w", err)
 	}
-
-	// Get file start offset
-	fileOffset := fileInfoStart + int64(length)
-
-	// Create an XXTEA reader from the encrypted fileInfo bytes
-	// This matches the C# approach where XXTeaStream wraps the MemoryStream
-	// and decrypts incrementally as BinaryReader requests bytes
-	keyArray := bytesToUint32Array(p.key)
-
-	// Create XXTEA reader to decrypt file info
-	fileInfoReader := NewXXTEAReader(bytes.NewReader(fileInfo), keyArray)
-
-	// Parse the file info using the streaming XXTEA reader
-	err = p.parseFileInfo(
-		fileInfoReader, fileInfo,
-		int(fileOffset), int(totalSize),
-	)
-
-	if err != nil {
-		return err
+	r.dataBase = fileInfoStart + length
+	if r.size-r.dataBase >= 1<<31 {
+		return fmt.Errorf("osz2: encrypted file data is too large")
 	}
-
-	// Read file contents
-	return p.readFileContents(r, int(fileOffset))
+	return r.parseFileInfo(encryptedInfo, beatmapIDs)
 }
 
-func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffset int, totalSize int) error {
-	if fileOffset < 0 || totalSize < fileOffset || totalSize-fileOffset >= 1<<31 {
-		return fmt.Errorf("invalid file data bounds: offset %d, total size %d", fileOffset, totalSize)
-	}
-	fileDataSize := int32(totalSize - fileOffset)
+func (r *Reader) parseFileInfo(encryptedInfo []byte, beatmapIDs map[string]int32) error {
+	decoder := crypto.NewXXTEAReader(
+		bytes.NewReader(encryptedInfo),
+		bytesToUint32s(r.key[:]),
+	)
 
 	var count int32
-	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
-		return err
+	if err := binary.Read(decoder, binary.LittleEndian, &count); err != nil {
+		return fmt.Errorf("osz2: read file count: %w", err)
 	}
 	if count <= 0 {
-		return fmt.Errorf("invalid file count: %d", count)
+		return fmt.Errorf("osz2: invalid file count %d", count)
+	}
+	if int64(count) > int64(len(encryptedInfo))/33 {
+		return fmt.Errorf("osz2: file count %d exceeds the file-info table", count)
 	}
 
-	// Verify file info hash
-	fileInfoHash := computeOszHash(encryptedFileInfo, int(count)*4, 0xd1)
-	if !bytes.Equal(fileInfoHash, p.FileInfoHash) {
-		return errors.New("fileInfo hash mismatch")
+	fileInfoHash := computeOszHash(encryptedInfo, int(count)*4, 0xd1)
+	if fileInfoHash != r.info.FileInfoHash {
+		return errors.New("osz2: file-info hash mismatch")
 	}
 
 	var currentOffset int32
-	if err := binary.Read(r, binary.LittleEndian, &currentOffset); err != nil {
-		return err
+	if err := binary.Read(decoder, binary.LittleEndian, &currentOffset); err != nil {
+		return fmt.Errorf("osz2: read first file offset: %w", err)
 	}
 	if currentOffset != 0 {
-		return fmt.Errorf("invalid first file offset: %d", currentOffset)
+		return fmt.Errorf("osz2: invalid first file offset %d", currentOffset)
 	}
 
+	fileDataSize := int32(r.size - r.dataBase)
 	for i := range count {
-		fileName, err := readStringFromBuffer(r)
+		name, err := readString(decoder)
+		if err != nil {
+			return fmt.Errorf("osz2: read entry name: %w", err)
+		}
+		name, err = canonicalEntryPath(name) // reject path traversal etc.
 		if err != nil {
 			return err
 		}
-		if _, exists := p.FileInfos[fileName]; exists {
-			return fmt.Errorf("duplicate file info filename: %q", fileName)
+		if _, exists := r.entries[name]; exists {
+			return fmt.Errorf("osz2: duplicate entry %q", name)
 		}
 
-		fileHash := make([]byte, 16)
-		if _, err := io.ReadFull(r, fileHash); err != nil {
-			return err
+		entry := &Entry{
+			path: name,
+		}
+		if _, err := io.ReadFull(decoder, entry.hash[:]); err != nil {
+			return fmt.Errorf("osz2: read hash for %q: %w", name, err)
 		}
 
-		var dateCreatedBinary, dateModifiedBinary int64
-		if err := binary.Read(r, binary.LittleEndian, &dateCreatedBinary); err != nil {
-			return err
+		var created, modified int64
+		if err := binary.Read(decoder, binary.LittleEndian, &created); err != nil {
+			return fmt.Errorf("osz2: read creation time for %q: %w", name, err)
 		}
-		if err := binary.Read(r, binary.LittleEndian, &dateModifiedBinary); err != nil {
-			return err
+		if err := binary.Read(decoder, binary.LittleEndian, &modified); err != nil {
+			return fmt.Errorf("osz2: read modification time for %q: %w", name, err)
 		}
 
-		// Convert from .NET DateTime.ToBinary() format
-		// .NET DateTime ticks are 100-nanosecond intervals since January 1, 0001
-		// DateTime.ToBinary() encodes both the ticks and the Kind
-		dateCreated := convertFromDotNetBinary(dateCreatedBinary)
-		dateModified := convertFromDotNetBinary(dateModifiedBinary)
+		entry.createdAt = convertFromDotNetBinary(created)
+		entry.modifiedAt = convertFromDotNetBinary(modified)
 
-		var nextOffset int32
+		nextOffset := fileDataSize
 		if i+1 < count {
-			if err := binary.Read(r, binary.LittleEndian, &nextOffset); err != nil {
-				return err
+			if err := binary.Read(decoder, binary.LittleEndian, &nextOffset); err != nil {
+				return fmt.Errorf("osz2: read next offset for %q: %w", name, err)
 			}
-		} else {
-			// For last file, calculate size differently - use total file size minus file offset
-			nextOffset = fileDataSize
 		}
-		if nextOffset < currentOffset || nextOffset > fileDataSize {
-			return fmt.Errorf("invalid offset for file %q: %d after %d", fileName, nextOffset, currentOffset)
+		if nextOffset < currentOffset || nextOffset > fileDataSize || nextOffset-currentOffset < 4 {
+			return fmt.Errorf("osz2: invalid data span for %q", name)
 		}
 
-		fileLength := nextOffset - currentOffset
-		if fileLength < 4 {
-			return fmt.Errorf("invalid size for file %q: %d", fileName, fileLength)
+		entry.size = int64(nextOffset-currentOffset) - 4
+		entry.dataOffset = r.dataBase + int64(currentOffset) + 4
+		actualLength, err := readEncryptedFrameLength(r.source, r.dataBase+int64(currentOffset), r.key)
+		if err != nil {
+			return fmt.Errorf("osz2: read content length for %q: %w", name, err)
+		}
+		if actualLength != entry.size {
+			return fmt.Errorf("osz2: content length for %q is %d, file table says %d", name, actualLength, entry.size)
 		}
 
-		info := NewFileInfo(
-			fileName, currentOffset, fileLength,
-			fileHash, dateCreated, dateModified,
-		)
-		if beatmapID, ok := p.FileNames[fileName]; ok {
-			info.BeatmapID = beatmapID
-		}
-		p.FileInfos[fileName] = info
-
-		// Move to next file offset
+		r.entries[name] = entry
 		currentOffset = nextOffset
 	}
-
-	return p.validateBeatmapMappings()
+	return r.applyBeatmapIDs(beatmapIDs)
 }
 
-func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
-	for fileName, fileInfo := range p.FileInfos {
-		content := make([]byte, fileInfo.Size-4) // -4 because of the encrypted length prefix
-		_, err := readEncryptedEntryContent(r, fileOffset+int(fileInfo.Offset), p.key, content)
-		if err != nil {
-			return fmt.Errorf("read file %q: %w", fileName, err)
+func (r *Reader) applyBeatmapIDs(beatmapIDs map[string]int32) error {
+	for name, id := range beatmapIDs {
+		entry, exists := r.entries[name]
+		if !exists || !entry.isBeatmapFile() {
+			return fmt.Errorf("osz2: beatmap mapping references invalid entry %q", name)
 		}
+		if id != -1 {
+			entry.beatmapID = id
+			entry.hasBeatmapID = true
+			r.beatmaps[id] = entry
+		}
+	}
 
-		if info, ok := p.FileInfos[fileName]; ok && info != nil {
-			info.Content = content
+	// Each beatmap is required to be assigned an ID, even if its just -1
+	for name, entry := range r.entries {
+		if entry.isBeatmapFile() {
+			if _, exists := beatmapIDs[name]; !exists {
+				return fmt.Errorf("osz2: beatmap entry %q has no ID mapping", name)
+			}
 		}
 	}
 	return nil
 }
 
-func readEncryptedEntryLength(reader io.ReadSeeker, offset int, xxtea *XXTEA) (int, error) {
-	encryptedLength := make([]byte, 4)
-	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
+func readEncryptedFrameLength(source io.ReaderAt, offset int64, key [md5.Size]byte) (int64, error) {
+	var encrypted [4]byte
+	if _, err := source.ReadAt(encrypted[:], offset); err != nil {
 		return 0, err
 	}
-	if _, err := io.ReadFull(reader, encryptedLength); err != nil {
-		return 0, err
-	}
-
-	xxtea.Decrypt(encryptedLength, 0, 4)
-	return int(binary.LittleEndian.Uint32(encryptedLength)), nil
+	crypto.NewXXTEA(bytesToUint32s(key[:])).Decrypt(encrypted[:], 0, len(encrypted))
+	return int64(binary.LittleEndian.Uint32(encrypted[:])), nil
 }
 
-func readEncryptedEntryContent(reader io.ReadSeeker, offset int, key []byte, buffer []byte) (int, error) {
-	xxtea := NewXXTEA(bytesToUint32Array(key))
-	entryLength, err := readEncryptedEntryLength(reader, offset, xxtea)
+func canonicalEntryPath(name string) (string, error) {
+	name = strings.ReplaceAll(name, `\`, "/")
+	name = path.Clean(name)
+	if name == "." || !fs.ValidPath(name) {
+		return "", fmt.Errorf("osz2: invalid entry path %q", name)
+	}
+	return name, nil
+}
+
+func remainingBytes(stream io.ReadSeeker) (int64, error) {
+	current, err := stream.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return 0, err
 	}
-
-	if entryLength != len(buffer) {
-		return 0, fmt.Errorf("entry length %d does not match file table length %d", entryLength, len(buffer))
-	}
-	if entryLength == 0 {
-		return 0, nil
-	}
-	if _, err := reader.Seek(int64(offset+4), io.SeekStart); err != nil {
+	end, err := stream.Seek(0, io.SeekEnd)
+	if err != nil {
 		return 0, err
 	}
-	if _, err := io.ReadFull(reader, buffer); err != nil {
+	if _, err := stream.Seek(current, io.SeekStart); err != nil {
 		return 0, err
 	}
-	xxtea.Decrypt(buffer, 0, entryLength)
-	return entryLength, nil
+	if end < current {
+		return 0, errors.New("osz2: invalid package stream position")
+	}
+	return end - current, nil
 }

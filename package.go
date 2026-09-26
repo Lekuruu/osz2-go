@@ -1,399 +1,297 @@
-// Package osz2 provides utilities to work with osz2 & osf2 files
+// Package osz2 exposes osu! package files as standard Go filesystems.
 package osz2
 
 import (
-	"archive/zip"
-	"bytes"
+	"cmp"
+	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
-	"path/filepath"
-	"strconv"
-	"time"
+	"path"
+	"slices"
 )
 
-// Package represents an osz2 package
-type Package struct {
-	IV      []byte
-	Version byte
+// Metadata contains package metadata.
+type Metadata map[MetaType]string
 
-	// Metadata contains .osu metadata (e.g Artist, Difficulty, etc..)
-	Metadata map[MetaType]string
-
-	// FileInfos contains .osu file info (e.g FileName, Hash, Size etc..)
-	FileInfos map[string]*FileInfo
-
-	// FileNames maps filename to beatmap id
-	FileNames map[string]int32
-
-	// FileIDs maps beatmap id to filename
-	FileIDs map[int32]string
-
-	// Hashes
-	MetaDataHash []byte
-	FileInfoHash []byte
-	FullBodyHash []byte
-
-	// Key for XTEA algorithm
-	key []byte
-
-	// KeyType controls the key derivation
-	KeyType KeyType
-
-	// Want to read the metadata only?
-	metadataOnly bool
+// PackageInfo describes the package header.
+type PackageInfo struct {
+	KeyType      KeyType
+	Version      byte
+	EncodedIV    [16]byte
+	MetadataHash [md5.Size]byte
+	FileInfoHash [md5.Size]byte
+	BodyHash     [md5.Size]byte
 }
 
-// NewPackage creates a new osz2 package from a reader
-func NewPackage(r io.ReadSeeker, metadataOnly bool) (*Package, error) {
-	return NewPackageWithKeyType(r, metadataOnly, KeyTypeOsz2)
+// Reader is an osz2 / osf2 filesystem.
+type Reader struct {
+	source   io.ReaderAt
+	size     int64
+	info     PackageInfo
+	metadata Metadata
+	key      [md5.Size]byte
+	dataBase int64
+
+	entries  map[string]*Entry
+	children map[string][]*Entry
+	beatmaps map[int32]*Entry
 }
 
-// NewPackageWithKeyType creates a new package from a reader with a specific key derivation
-func NewPackageWithKeyType(r io.ReadSeeker, metadataOnly bool, keyType KeyType) (*Package, error) {
-	p := &Package{
-		Metadata:     make(map[MetaType]string),
-		FileInfos:    make(map[string]*FileInfo),
-		FileNames:    make(map[string]int32),
-		FileIDs:      make(map[int32]string),
-		Version:      0,
-		IV:           make([]byte, 16),
-		KeyType:      keyType,
-		metadataOnly: metadataOnly,
-	}
-
-	err := p.read(r)
-	if err != nil {
-		return nil, err
-	}
-
-	return p, nil
+// ReadCloser is a Reader that owns the io.Closer.
+type ReadCloser struct {
+	*Reader
+	handle io.Closer
 }
 
-// NewPackageFromFile reads a package directly from a file path
-func NewPackageFromFile(path string, metadataOnly bool, keyType KeyType) (*Package, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return NewPackageWithKeyType(f, metadataOnly, keyType)
-}
-
-// NewPackageFromBytes reads a package from raw bytes.
-func NewPackageFromBytes(data []byte, metadataOnly bool, keyType KeyType) (*Package, error) {
-	return NewPackageWithKeyType(bytes.NewReader(data), metadataOnly, keyType)
-}
-
-// NewPackageFromDirectory initializes a package from all files in a directory
-func NewPackageFromDirectory(directory string, keyType KeyType) (*Package, error) {
-	p := NewEmptyPackage(keyType)
-	if err := p.AddDirectory(directory, true); err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// NewEmptyPackage creates an editable package without reading from a source file
-func NewEmptyPackage(keyType KeyType) *Package {
-	return &Package{
-		Metadata:  make(map[MetaType]string),
-		FileInfos: make(map[string]*FileInfo),
-		FileNames: make(map[string]int32),
-		FileIDs:   make(map[int32]string),
-		Version:   0,
-		IV:        make([]byte, 16),
-		KeyType:   keyType,
-	}
-}
-
-// Files returns package file contents as a filename to byte-array map
-func (p *Package) Files() map[string][]byte {
-	result := make(map[string][]byte, len(p.FileInfos))
-	for name, info := range p.FileInfos {
-		if info == nil || info.Content == nil {
-			continue
-		}
-		result[name] = info.Content
-	}
-	return result
-}
-
-// FindFileByName gets file content by filename
-func (p *Package) FindFileByName(name string) ([]byte, bool) {
-	info, ok := p.FileInfos[name]
-	if !ok {
-		return nil, false
-	}
-	if info == nil || info.Content == nil {
-		return nil, false
-	}
-	return info.Content, true
-}
-
-// FindFileByBeatmapID gets file content by beatmap ID
-func (p *Package) FindFileByBeatmapID(beatmapID int32) (string, []byte, bool) {
-	if name, ok := p.FileIDs[beatmapID]; ok {
-		info := p.FileInfos[name]
-		if info == nil {
-			return name, nil, false
-		}
-		return name, info.Content, info.Content != nil
-	}
-	return "", nil, false
-}
-
-// AddFile adds or replaces a file in the package
-func (p *Package) AddFile(filename string, content []byte, dateCreated, dateModified time.Time) *FileInfo {
-	if dateCreated.IsZero() {
-		dateCreated = time.Now().UTC()
-	}
-	if dateModified.IsZero() {
-		dateModified = time.Now().UTC()
-	}
-
-	info := NewFileInfo(filename, 0, int32(len(content)+4), nil, dateCreated, dateModified)
-	info.Content = content
-	p.AddFileInfo(info)
-	return info
-}
-
-// AddFileInfo adds or replaces a FileInfo in the package
-func (p *Package) AddFileInfo(info *FileInfo) {
-	p.FileInfos[info.FileName] = info
-
-	if isBeatmapFile(info) {
-		if _, exists := p.FileNames[info.FileName]; !exists {
-			p.FileNames[info.FileName] = -1
-			info.BeatmapID = -1
-		}
-		if beatmapID, exists := p.FileNames[info.FileName]; exists {
-			info.BeatmapID = beatmapID
-		}
-	}
-}
-
-// AddFileFromDisk adds a file from disk
-func (p *Package) AddFileFromDisk(filename, path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	st, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	p.AddFile(filename, content, st.ModTime(), st.ModTime())
-	return nil
-}
-
-// AddDirectory adds files from a directory
-func (p *Package) AddDirectory(path string, recursive bool) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("path is not a directory: %s", path)
-	}
-
-	base, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-
-	if !recursive {
-		entries, err := os.ReadDir(base)
-		if err != nil {
-			return err
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			fullPath := filepath.Join(base, entry.Name())
-			if err := p.AddFileFromDisk(entry.Name(), fullPath); err != nil {
-				return err
-			}
-		}
+// Close closes the io.Closer handle, e.g. a file.
+func (r *ReadCloser) Close() error {
+	if r == nil || r.handle == nil {
 		return nil
 	}
+	err := r.handle.Close()
+	r.handle = nil
+	return err
+}
 
-	return filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+// OpenReader opens name as an osz2 / osf2 filesystem.
+func OpenReader(name string, keyType KeyType) (*ReadCloser, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	reader, err := NewReader(file, info.Size(), keyType)
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return &ReadCloser{Reader: reader, handle: file}, nil
+}
+
+// NewReader returns an osz2 / osf2 package from a random-access reader source.
+func NewReader(source io.ReaderAt, size int64, keyType KeyType) (*Reader, error) {
+	if source == nil {
+		return nil, fmt.Errorf("osz2: nil package source")
+	}
+	if size < 0 {
+		return nil, fmt.Errorf("osz2: invalid package size %d", size)
+	}
+
+	reader := &Reader{
+		source:   source,
+		size:     size,
+		info:     PackageInfo{KeyType: keyType},
+		metadata: make(Metadata),
+		entries:  make(map[string]*Entry),
+		children: make(map[string][]*Entry),
+		beatmaps: make(map[int32]*Entry),
+	}
+	// Read everything from metadata, beatmap IDs & entry table
+	if err := reader.readIndex(); err != nil {
+		return nil, err
+	}
+	// Build the directory tree from our newly read entries
+	if err := reader.buildDirectories(); err != nil {
+		return nil, err
+	}
+	return reader, nil
+}
+
+// Info returns a copy of the package header information.
+func (r *Reader) Info() PackageInfo {
+	return r.info
+}
+
+// Metadata returns a copy of the package metadata.
+func (r *Reader) Metadata() Metadata {
+	return maps.Clone(r.metadata)
+}
+
+// Open implements fs.FS.
+func (r *Reader) Open(name string) (fs.File, error) {
+	return r.OpenEntry(name)
+}
+
+// OpenEntry opens name and returns our own File object.
+func (r *Reader) OpenEntry(name string) (*File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	entry, ok := r.entries[name]
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+	return &File{reader: r, entry: entry}, nil
+}
+
+// OpenBeatmap opens the entry assigned to id.
+func (r *Reader) OpenBeatmap(id int32) (*File, error) {
+	entry, ok := r.beatmaps[id]
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: fmt.Sprintf("beatmap:%d", id), Err: fs.ErrNotExist}
+	}
+	return r.OpenEntry(entry.path)
+}
+
+// Entry returns metadata for name without opening its contents.
+func (r *Reader) Entry(name string) (*Entry, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrInvalid}
+	}
+	entry, ok := r.entries[name]
+	if !ok {
+		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrNotExist}
+	}
+	return entry, nil
+}
+
+// Stat implements fs.StatFS.
+func (r *Reader) Stat(name string) (fs.FileInfo, error) {
+	entry, err := r.Entry(name)
+	if err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+// EntryByBeatmapID returns the entry assigned to id.
+func (r *Reader) EntryByBeatmapID(id int32) (*Entry, bool) {
+	entry, ok := r.beatmaps[id]
+	return entry, ok
+}
+
+// ReadDir implements fs.ReadDirFS.
+func (r *Reader) ReadDir(name string) ([]fs.DirEntry, error) {
+	entry, err := r.Entry(name)
+	if err != nil {
+		return nil, err
+	}
+	if !entry.isDir {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fmt.Errorf("%w: not a directory", fs.ErrInvalid)}
+	}
+
+	children := r.children[name]
+	result := make([]fs.DirEntry, len(children))
+	for i, child := range children {
+		result[i] = child
+	}
+	return result, nil
+}
+
+// Verify checks the encrypted package body & every
+// regular file without loading them all into memory.
+func (r *Reader) Verify() error {
+	if err := r.verifyBodyHash(); err != nil {
+		return err
+	}
+
+	paths := make([]string, 0, len(r.entries))
+	for name, entry := range r.entries {
+		if !entry.isDir {
+			paths = append(paths, name)
 		}
-		if d.IsDir() {
-			return nil
-		}
-		relPath, err := filepath.Rel(base, path)
+	}
+	slices.Sort(paths)
+
+	for _, name := range paths {
+		file, err := r.OpenEntry(name)
 		if err != nil {
 			return err
 		}
-		relPath = filepath.ToSlash(relPath)
-		return p.AddFileFromDisk(relPath, path)
-	})
-}
 
-// RemoveFile removes a file from the package
-func (p *Package) RemoveFile(filename string) bool {
-	_, ok := p.FileInfos[filename]
-	if !ok {
-		return false
-	}
-	delete(p.FileInfos, filename)
-
-	if beatmapID, exists := p.FileNames[filename]; exists {
-		delete(p.FileNames, filename)
-		if owner, ok := p.FileIDs[beatmapID]; ok && owner == filename {
-			delete(p.FileIDs, beatmapID)
-		}
-	}
-	return true
-}
-
-// AddMetadata adds or updates metadata
-func (p *Package) AddMetadata(metaType MetaType, value any) {
-	p.Metadata[metaType] = fmt.Sprint(value)
-}
-
-// RemoveMetadata removes metadata
-func (p *Package) RemoveMetadata(metaType MetaType) bool {
-	if _, ok := p.Metadata[metaType]; !ok {
-		return false
-	}
-	delete(p.Metadata, metaType)
-	return true
-}
-
-// GetMetadata gets metadata by type
-func (p *Package) GetMetadata(metaType MetaType) (string, bool) {
-	v, ok := p.Metadata[metaType]
-	return v, ok
-}
-
-// SetBeatmapID sets beatmap ID for a .osu file
-func (p *Package) SetBeatmapID(filename string, beatmapID int32) error {
-	if _, ok := p.FileInfos[filename]; !ok {
-		return fmt.Errorf("file not found: %s", filename)
-	}
-
-	info := p.FileInfos[filename]
-	if info == nil {
-		return fmt.Errorf("file info is nil: %s", filename)
-	}
-	if !isBeatmapFile(info) {
-		return fmt.Errorf("file is not a beatmap: %s", filename)
-	}
-	if beatmapID != -1 {
-		if owner, exists := p.FileIDs[beatmapID]; exists && owner != filename {
-			return fmt.Errorf("beatmap ID %d is already assigned to %s", beatmapID, owner)
-		}
-	}
-
-	if oldID, ok := p.FileNames[filename]; ok {
-		if owner, exists := p.FileIDs[oldID]; exists && owner == filename {
-			delete(p.FileIDs, oldID)
-		}
-	}
-	p.FileNames[filename] = beatmapID
-	if beatmapID != -1 {
-		p.FileIDs[beatmapID] = filename
-	}
-	if info, exists := p.FileInfos[filename]; exists && info != nil {
-		info.BeatmapID = beatmapID
-	}
-	return nil
-}
-
-// SetBeatmapSetID sets BeatmapSetID metadata
-func (p *Package) SetBeatmapSetID(beatmapSetID int64) {
-	p.Metadata[BeatmapSetID] = strconv.FormatInt(beatmapSetID, 10)
-}
-
-// CreateOszPackage creates a plain .osz zip package from the current files
-func (p *Package) CreateOszPackage(excludeDisallowedFiles bool) ([]byte, error) {
-	var buf bytes.Buffer
-
-	zw := zip.NewWriter(&buf)
-	defer zw.Close()
-
-	for _, info := range p.FileInfos {
-		if info == nil {
-			continue
-		}
-		content := info.Content
-		if content == nil {
-			continue
-		}
-		if excludeDisallowedFiles {
-			if !info.IsAllowedExtension() {
-				continue
-			}
-		}
-
-		hdr := &zip.FileHeader{
-			Name:     filepath.ToSlash(info.FileNameSanitized()),
-			Method:   zip.Deflate,
-			Modified: time.Now(),
-		}
-
-		if !info.DateModified.IsZero() {
-			hdr.Modified = info.DateModified
-		}
-
-		w, err := zw.CreateHeader(hdr)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := w.Write(content); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func (p *Package) validateBeatmapMappings() error {
-	for fileName, beatmapID := range p.FileNames {
-		info, exists := p.FileInfos[fileName]
-		if !exists || !isBeatmapFile(info) {
-			return fmt.Errorf("beatmap mapping references missing or invalid file %q", fileName)
-		}
-		if info.BeatmapID != beatmapID {
-			return fmt.Errorf("beatmap ID mismatch for %q", fileName)
-		}
-		if beatmapID != -1 {
-			if owner, ok := p.FileIDs[beatmapID]; !ok || owner != fileName {
-				return fmt.Errorf("missing reverse mapping for beatmap ID %d", beatmapID)
-			}
-		}
-	}
-
-	for fileName, info := range p.FileInfos {
-		if isBeatmapFile(info) {
-			if _, exists := p.FileNames[fileName]; !exists {
-				return fmt.Errorf("beatmap file %q has no ID mapping", fileName)
-			}
-		}
-	}
-
-	for beatmapID, fileName := range p.FileIDs {
-		if beatmapID == -1 {
-			return fmt.Errorf("unassigned beatmap %q has a reverse mapping", fileName)
-		}
-		if mappedID, exists := p.FileNames[fileName]; !exists || mappedID != beatmapID {
-			return fmt.Errorf("invalid reverse mapping for beatmap ID %d", beatmapID)
+		verifyErr := file.Verify()
+		closeErr := file.Close()
+		if verifyErr != nil || closeErr != nil {
+			return errors.Join(verifyErr, closeErr)
 		}
 	}
 	return nil
 }
 
-func isBeatmapFile(info *FileInfo) bool {
-	return info != nil && (info.IsBeatmap() || info.IsCombinedBeatmap())
+func (r *Reader) verifyBodyHash() error {
+	total := r.size - r.dataBase
+	excludeStart, excludeLength := bodyHashExclusion(r.metadata, total)
+
+	hasher := newBodyHasher(
+		total,
+		excludeStart,
+		excludeLength,
+	)
+	if _, err := io.Copy(hasher, io.NewSectionReader(r.source, r.dataBase, total)); err != nil {
+		return fmt.Errorf("osz2: verify package body: %w", err)
+	}
+	if hasher.sum() != r.info.BodyHash {
+		return errors.New("osz2: package body hash mismatch")
+	}
+	return nil
+}
+
+func (r *Reader) buildDirectories() error {
+	/*
+		Given our read entries, we effentively want
+		something like this in the end:
+
+		r.children["."] = {
+			"song.mp3",
+			"images",
+			"maps",
+		}
+		r.children["images"] = {
+			"bg.jpg",
+		}
+		r.children["maps"] = {
+			"easy.osu",
+			"hard.osu",
+		}
+	*/
+
+	// Create the root directory
+	r.entries["."] = newDirectoryEntry(".")
+
+	// Take a snapshot so newly created parent
+	// directories are not traversed again
+	entries := slices.Collect(maps.Values(r.entries))
+
+	for _, entry := range entries {
+		if entry.path == "." || entry.isDir {
+			continue
+		}
+
+		// We want to create every sub-directory of the package
+		// To do this, we walk the path upwards until we have reached the "." directory
+		parent := path.Dir(entry.path)
+		for parent != "." {
+			existing, exists := r.entries[parent]
+			if !exists {
+				r.entries[parent] = newDirectoryEntry(parent)
+			} else if !existing.isDir {
+				return fmt.Errorf("osz2: entry '%q' is both a file and a directory", parent) // pepega
+			}
+			parent = path.Dir(parent)
+		}
+	}
+
+	// Now that we have all directories listed, we can start indexing parent -> children relationships
+	for entryPath, entry := range r.entries {
+		if entryPath == "." {
+			continue
+		}
+		parent := path.Dir(entryPath)
+		r.children[parent] = append(r.children[parent], entry)
+	}
+	for directory := range r.children {
+		slices.SortFunc(r.children[directory], func(a, b *Entry) int {
+			return cmp.Compare(a.Name(), b.Name())
+		})
+	}
+	return nil
 }

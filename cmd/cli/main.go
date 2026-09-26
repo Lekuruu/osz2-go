@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -14,7 +15,11 @@ import (
 )
 
 func main() {
-	inputFile := flag.String("input", "", "Path to the .osz2 file (required)")
+	os.Exit(run())
+}
+
+func run() int {
+	inputFile := flag.String("input", "", "Path to the .osz2 or .osf2 file (required)")
 	outputDir := flag.String("output", "", "Output directory for extracted files (required)")
 	metadataFile := flag.String("metadata", "metadata.json", "Output path for metadata JSON file")
 	help := flag.Bool("help", false, "Show help message")
@@ -23,78 +28,82 @@ func main() {
 	// Show help if requested or if required flags are missing
 	if *help || *inputFile == "" || *outputDir == "" {
 		printHelp()
-		os.Exit(0)
+		return 0
 	}
 
 	// Check if input file exists
 	if _, err := os.Stat(*inputFile); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Error: Input file does not exist: %s\n", *inputFile)
-		os.Exit(1)
+		return 1
 	}
 
-	// Open the osz2 file
-	file, err := os.Open(*inputFile)
+	// Pick the encryption scheme from the file extension
+	var keyType osz2.KeyType
+	switch strings.ToLower(filepath.Ext(*inputFile)) {
+	case ".osz2":
+		keyType = osz2.KeyTypeOsz2
+	case ".osf2":
+		keyType = osz2.KeyTypeOsf2
+	default:
+		fmt.Fprintln(os.Stderr, "Error: input must be an .osz2 or .osf2 file")
+		return 1
+	}
+
+	// Mount the package
+	fmt.Printf("Reading %s package...\n", keyType)
+	reader, err := osz2.OpenReader(*inputFile, keyType)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening file: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error parsing package: %v\n", err)
+		return 1
 	}
-	defer file.Close()
+	defer reader.Close()
 
-	// Parse the osz2 package (metadataOnly => false to read all files)
-	fmt.Println("Reading osz2 package...")
-	pkg, err := osz2.NewPackage(file, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing osz2 package: %v\n", err)
-		os.Exit(1)
-	}
-
+	// Write out the metadata first before we extract any files
 	metadataPath, err := resolveMetadataPath(*outputDir, *metadataFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error validating metadata path: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
-
-	// Extract files
-	files := pkg.Files()
-	fmt.Printf("Extracting %d files to %s...\n", len(files), *outputDir)
-
-	if err := extractFiles(*outputDir, files); err != nil {
-		fmt.Fprintf(os.Stderr, "Error extracting files: %v\n", err)
-		os.Exit(1)
+	metadata, err := buildMetadata(reader.Reader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building metadata: %v\n", err)
+		return 1
 	}
-	for fileName, content := range files {
-		fmt.Printf("  -> %s (%d bytes)\n", fileName, len(content))
-	}
-
-	// Build metadata structure
-	metadata := buildMetadata(pkg)
-
-	// Write metadata to JSON file
 	jsonData, err := json.MarshalIndent(metadata, "", "    ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling metadata to JSON: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
+	fmt.Printf("Writing metadata to %s...\n", metadataPath)
 	if err := writeMetadataFile(*outputDir, *metadataFile, jsonData); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing metadata file: %v\n", err)
-		os.Exit(1)
+		return 1
+	}
+
+	// Extract files one at a time so large packages do not need to fit in memory
+	fmt.Printf("Extracting files to %s...\n", *outputDir)
+	fileCount, err := extractFiles(*outputDir, reader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error extracting files: %v\n", err)
+		return 1
 	}
 
 	fmt.Printf("\nExtraction complete!\n")
-	fmt.Printf("  Files extracted: %d\n", len(files))
+	fmt.Printf("  Files extracted: %d\n", fileCount)
 	fmt.Printf("  Metadata saved to: %s\n", metadataPath)
+	return 0
 }
 
 func printHelp() {
-	fmt.Println("osz2 Extractor - Extract .osz2 files and save metadata")
+	fmt.Println("osz2 Extractor - Extract .osz2 / .osf2 files and save metadata")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  osz2-cli -input <file.osz2> -output <directory> [-metadata <metadata.json>]")
+	fmt.Println("  osz2-cli -input <file.osz2|file.osf2> -output <directory> [-metadata <metadata.json>]")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  -input string")
-	fmt.Println("        Path to the .osz2 file (required)")
+	fmt.Println("        Path to the .osz2 / .osf2 file (required)")
 	fmt.Println("  -output string")
 	fmt.Println("        Output directory for extracted files (required)")
 	fmt.Println("  -metadata string")
@@ -107,39 +116,66 @@ func printHelp() {
 	fmt.Println("  osz2-cli -input beatmap.osz2 -output ./extracted -metadata info.json")
 }
 
-func extractFiles(outputDir string, files map[string][]byte) error {
-	targets := make(map[string][]byte, len(files))
-	for fileName, content := range files {
-		target, err := normalizeExtractionPath(fileName)
-		if err != nil {
-			return err
-		}
-		if _, exists := targets[target]; exists {
-			return fmt.Errorf("multiple package files resolve to %q", target)
-		}
-		targets[target] = content
-	}
-
+func extractFiles(outputDir string, source fs.FS) (int, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
+		return 0, fmt.Errorf("create output directory: %w", err)
 	}
 	root, err := os.OpenRoot(outputDir)
 	if err != nil {
-		return fmt.Errorf("open output directory: %w", err)
+		return 0, fmt.Errorf("open output directory: %w", err)
 	}
 	defer root.Close()
 
-	for target, content := range targets {
+	fileCount := 0
+	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		target, err := normalizeExtractionPath(name)
+		if err != nil {
+			return err
+		}
 		if dir := path.Dir(target); dir != "." {
 			if err := root.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("create directory for %q: %w", target, err)
 			}
 		}
-		if err := root.WriteFile(target, content, 0o644); err != nil {
-			return fmt.Errorf("write %q: %w", target, err)
+
+		input, err := source.Open(name)
+		if err != nil {
+			return err
 		}
-	}
-	return nil
+		output, err := root.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			input.Close()
+			return fmt.Errorf("open %q for writing: %w", target, err)
+		}
+
+		_, copyErr := io.Copy(output, input)
+		outputCloseErr := output.Close()
+		inputCloseErr := input.Close()
+		if copyErr != nil {
+			return fmt.Errorf("write %q: %w", target, copyErr)
+		}
+		if outputCloseErr != nil {
+			return fmt.Errorf("close %q: %w", target, outputCloseErr)
+		}
+		if inputCloseErr != nil {
+			return fmt.Errorf("close package file %q: %w", name, inputCloseErr)
+		}
+
+		fileCount++
+		fmt.Printf("  -> %s (%d bytes)\n", name, info.Size())
+		return nil
+	})
+	return fileCount, err
 }
 
 func normalizeExtractionPath(fileName string) (string, error) {
