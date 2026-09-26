@@ -1,7 +1,9 @@
 package osz2
 
 import (
+	"bytes"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,6 +107,79 @@ func testPackage(t *testing.T, filename string, key KeyType) {
 	}
 }
 
+func TestPackageRoundTrip(t *testing.T) {
+	testFiles, err := filepath.Glob("tests/*.osz2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(testFiles) == 0 {
+		t.Fatal("no osz2 test packages found")
+	}
+
+	for _, testFile := range testFiles {
+		t.Run(filepath.Base(testFile), func(t *testing.T) {
+			originalData, err := os.ReadFile(testFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			original, err := NewReader(
+				bytes.NewReader(originalData),
+				int64(len(originalData)),
+				KeyTypeOsz2,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var rewrittenData bytes.Buffer
+			writer, err := NewWriter(&rewrittenData)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.SetKey(original.Info().KeyType); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.SetVersion(original.Info().Version); err != nil {
+				t.Fatal(err)
+			}
+			for metadataType, value := range original.Metadata() {
+				if err := writer.SetMetadata(metadataType, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.SetFS(original); err != nil {
+				t.Fatal(err)
+			}
+
+			err = fs.WalkDir(original, ".", func(name string, dirEntry fs.DirEntry, err error) error {
+				if err != nil || dirEntry.IsDir() {
+					return err
+				}
+				entry, err := original.Entry(name)
+				if err != nil {
+					return err
+				}
+				if err := writer.AssignTimes(name, entry.CreatedAt(), entry.ModTime()); err != nil {
+					return err
+				}
+				if beatmapID, ok := entry.BeatmapID(); ok {
+					return writer.AssignBeatmapID(name, beatmapID)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			// TODO: Validate output
+		})
+	}
+}
+
 // BenchmarkParsePackage benchmarks package parsing
 func BenchmarkParsePackage(b *testing.B) {
 	testFile := "tests/nekodex - welcome to christmas.osz2"
@@ -132,5 +207,3 @@ func BenchmarkParsePackage(b *testing.B) {
 		file.Close()
 	}
 }
-
-// TODO: Test read -> write -> read rountrip once we can write
