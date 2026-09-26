@@ -9,6 +9,7 @@ import (
 )
 
 // Entry is metadata for a file in a package.
+// It does not contain any actual file contents.
 type Entry struct {
 	path         string
 	size         int64

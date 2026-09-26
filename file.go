@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// File is a handle to an osz2 package entry.
+// File is a read-only handle to an osz2 package entry.
+// It includes the Entry metadata on top of file operations.
 type File struct {
 	reader    *Reader
 	entry     *Entry
