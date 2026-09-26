@@ -3,30 +3,20 @@ package osz2
 import (
 	"bytes"
 	"crypto/md5"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
+var testFixtures = os.DirFS("../../tests")
+
 // TestPackagesOsz2 tests parsing of all .osz2 files in the tests directory
 func TestPackagesOsz2(t *testing.T) {
-	testFiles := []string{}
-
-	// Walk the tests directory to find .osz2 files
-	filepath.Walk("../../tests", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(path) == ".osz2" {
-			testFiles = append(testFiles, path)
-		}
-		return nil
-	})
-
-	for _, testFile := range testFiles {
+	for _, testFile := range testPackageNames(t, "*.osz2") {
 		t.Run(testFile, func(t *testing.T) {
 			testPackage(t, testFile, KeyTypeOsz2)
 		})
@@ -35,88 +25,84 @@ func TestPackagesOsz2(t *testing.T) {
 
 // TestPackagesOsf2 tests parsing of all .osf2 files in the tests directory
 func TestPackagesOsf2(t *testing.T) {
-	testFiles := []string{}
-
-	// Walk the tests directory to find .osf2 files
-	filepath.Walk("../../tests", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(path) == ".osf2" {
-			testFiles = append(testFiles, path)
-		}
-		return nil
-	})
-
-	for _, testFile := range testFiles {
+	for _, testFile := range testPackageNames(t, "*.osf2") {
 		t.Run(testFile, func(t *testing.T) {
 			testPackage(t, testFile, KeyTypeOsf2)
 		})
 	}
 }
 
-// testPackage tests parsing a single .osz2 file
-func testPackage(t *testing.T, filename string, key KeyType) {
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		t.Fatalf("Test file does not exist: %s", filename)
+func testPackageNames(t testing.TB, pattern string) []string {
+	t.Helper()
+
+	names, err := fs.Glob(testFixtures, pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 {
+		t.Fatalf("no test packages found matching %q", pattern)
+	}
+	return names
+}
+
+// testPackage tests parsing a single .osz2 / .osf2 file
+func testPackage(t *testing.T, filename string, keyType KeyType) {
+	data, err := fs.ReadFile(testFixtures, filename)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	t.Logf("Parsing package: %s", filename)
-	pkg, err := OpenReader(filename, key)
+	pkg, err := NewReader(bytes.NewReader(data), int64(len(data)), keyType)
 	if err != nil {
 		t.Fatalf("Failed to parse package %s: %v", filename, err)
 	}
-	defer pkg.Close()
 
 	t.Logf("Metadata entries: %d", len(pkg.Metadata()))
 	for metaType, value := range pkg.Metadata() {
 		t.Logf("  %v: %s", metaType, value)
 	}
 
-	fs, err := pkg.ReadDir(".")
-	if err != nil {
-		t.Fatalf("Failed to read filesystem: %v", err)
-	}
-
-	for _, entry := range fs {
+	err = fs.WalkDir(pkg, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		if entry.IsDir() {
-			continue
+			return nil
 		}
 
 		info, err := entry.Info()
 		if err != nil {
-			t.Fatalf("Failed to read file info: %v", err)
+			return err
 		}
-		t.Logf("  -> %s (%d bytes)", entry.Name(), info.Size())
+		t.Logf("  -> %s (%d bytes)", name, info.Size())
 
 		// Try to read the file
-		file, err := pkg.Open(entry.Name())
+		file, err := pkg.Open(name)
 		if err != nil {
-			t.Fatalf("Failed to open file handle: %v", err)
+			return err
 		}
-
-		data, err := io.ReadAll(file)
-		if err != nil {
-			t.Fatalf("Failed to read file contents: %v", err)
+		bytesRead, readErr := io.Copy(io.Discard, file)
+		if err := errors.Join(readErr, file.Close()); err != nil {
+			return err
 		}
-		if len(data) != int(info.Size()) {
-			t.Errorf("Invalid file size: got %d, want %d", len(data), info.Size())
+		if bytesRead != info.Size() {
+			return fmt.Errorf(
+				"decrypted size for %q is %d, entry says %d",
+				name, bytesRead, info.Size(),
+			)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Failed to read filesystem: %v", err)
 	}
 }
 
 func TestPackageRoundTrip(t *testing.T) {
-	testFiles, err := filepath.Glob("../../tests/*.osz2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(testFiles) == 0 {
-		t.Fatal("no osz2 test packages found")
-	}
-
-	for _, testFile := range testFiles {
-		t.Run(filepath.Base(testFile), func(t *testing.T) {
-			originalData, err := os.ReadFile(testFile)
+	for _, testFile := range testPackageNames(t, "*.osz2") {
+		t.Run(testFile, func(t *testing.T) {
+			originalData, err := fs.ReadFile(testFixtures, testFile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,28 +184,17 @@ func TestPackageRoundTrip(t *testing.T) {
 }
 
 func BenchmarkParsePackage(b *testing.B) {
-	testFile := "tests/nekodex - welcome to christmas.osz2"
-
-	stat, err := os.Stat(testFile)
-	if os.IsNotExist(err) {
-		b.Skip("Test file does not exist")
-	}
+	data, err := fs.ReadFile(testFixtures, "nekodex - welcome to christmas.osz2")
 	if err != nil {
-		b.Errorf("Failed to open test file: %v", err)
+		b.Fatal(err)
 	}
 
+	b.ResetTimer()
 	for b.Loop() {
-		file, err := os.Open(testFile)
-		if err != nil {
-			b.Fatalf("Failed to open file: %v", err)
-		}
-
-		_, err = NewReader(file, stat.Size(), KeyTypeOsz2)
+		_, err := NewReader(bytes.NewReader(data), int64(len(data)), KeyTypeOsz2)
 		if err != nil {
 			b.Fatalf("Failed to parse package: %v", err)
 		}
-
-		file.Close()
 	}
 }
 
@@ -231,11 +206,20 @@ func packageChecksums(t *testing.T, reader *Reader) map[string][md5.Size]byte {
 		if err != nil || dirEntry.IsDir() {
 			return err
 		}
-		content, err := fs.ReadFile(reader, name)
+		file, err := reader.Open(name)
 		if err != nil {
 			return err
 		}
-		checksums[name] = md5.Sum(content)
+
+		hasher := md5.New()
+		_, hashErr := io.Copy(hasher, file)
+		if err := errors.Join(hashErr, file.Close()); err != nil {
+			return err
+		}
+
+		var checksum [md5.Size]byte
+		copy(checksum[:], hasher.Sum(nil))
+		checksums[name] = checksum
 		return nil
 	})
 	if err != nil {
