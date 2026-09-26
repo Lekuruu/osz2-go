@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	dotNetToUnixEpochTicks = int64(621_355_968_000_000_000)
+	ticksPerSecond         = int64(10_000_000)
+)
+
 func readString(r io.Reader) (string, error) {
 	length, err := read7BitEncodedInt(r)
 	if err != nil {
@@ -104,11 +109,6 @@ func bytesToUint32s(data []byte) []uint32 {
 }
 
 func convertFromDotNetBinary(value int64) time.Time {
-	const (
-		dotNetToUnixEpochTicks = int64(621_355_968_000_000_000)
-		ticksPerSecond         = int64(10_000_000)
-	)
-
 	ticks := value & 0x3FFFFFFFFFFFFFFF
 	unixTicks := ticks - dotNetToUnixEpochTicks
 	seconds := unixTicks / ticksPerSecond
@@ -118,11 +118,6 @@ func convertFromDotNetBinary(value int64) time.Time {
 }
 
 func datetimeToDotNetBinary(t time.Time) (int64, error) {
-	const (
-		dotNetToUnixEpochTicks = int64(621_355_968_000_000_000)
-		ticksPerSecond         = int64(10_000_000)
-	)
-
 	if t.Year() < 1 || t.Year() > 9999 {
 		return 0, fmt.Errorf("timestamp year %d is outside the .NET DateTime range", t.Year())
 	}
@@ -131,12 +126,12 @@ func datetimeToDotNetBinary(t time.Time) (int64, error) {
 	return ticks, nil
 }
 
-func parseMetadataInt(metadata map[MetaType]string, key MetaType) (int, bool) {
+func parseMetadataInt(metadata Metadata, key MetaType) (int64, bool) {
 	value, ok := metadata[key]
 	if !ok {
 		return 0, false
 	}
-	parsed, err := strconv.Atoi(value)
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return 0, false
 	}
@@ -150,9 +145,9 @@ func bodyHashExclusion(metadata Metadata, total int64) (start, length int64) {
 		return -1, 0
 	}
 
-	start = int64(startValue)
-	length = int64(lengthValue)
-	if start+length > total {
+	start = startValue
+	length = lengthValue
+	if start > total || length > total-start {
 		return -1, 0
 	}
 	return start, length
