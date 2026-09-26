@@ -20,7 +20,7 @@ func finalizeOszHash(result [md5.Size]byte) [md5.Size]byte {
 	for i := range md5.Size / 2 {
 		result[i], result[i+md5.Size/2] = result[i+md5.Size/2], result[i]
 	}
-	result[5] ^= 0x2d
+	result[5] ^= hashFinalizationMask
 	return result
 }
 
@@ -89,7 +89,7 @@ func (h *bodyHasher) writeHashed(p []byte) {
 	if h.maskPosition >= start && h.maskPosition < end {
 		index := h.maskPosition - start
 		h.hash.Write(p[:index])
-		h.hash.Write([]byte{p[index] ^ 0x9f})
+		h.hash.Write([]byte{p[index] ^ bodyHashMask})
 		h.hash.Write(p[index+1:])
 	} else {
 		h.hash.Write(p)

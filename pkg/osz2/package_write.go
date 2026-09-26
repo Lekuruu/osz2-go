@@ -249,13 +249,13 @@ func (w *Writer) Close() error {
 	if err != nil {
 		return err
 	}
-	fileInfoHash := computeOszHash(fileInfo, len(w.entries)*4, 0xd1)
+	fileInfoHash := computeFileInfoHash(fileInfo, len(w.entries))
 
 	metadata, err := encodeMetadata(w.metadata)
 	if err != nil {
 		return err
 	}
-	metadataHash := computeOszHash(metadata, len(w.metadata)*3, 0xa7)
+	metadataHash := computeMetadataHash(metadata, len(w.metadata))
 
 	bodyHash, err := w.calculateBodyHash()
 	if err != nil {
@@ -289,16 +289,12 @@ func (w *Writer) Close() error {
 		return err
 	}
 
-	encodedLength := int64(len(fileInfo))
-	for i := 0; i < md5.Size; i += 2 {
-		encodedLength += int64(fileInfoHash[i]) | int64(fileInfoHash[i+1])<<17
+	encodedLength, err := encodeFileInfoLength(len(fileInfo), fileInfoHash)
+	if err != nil {
+		return err
 	}
 
-	if encodedLength > (1<<31)-1 {
-		return errors.New("osz2: encoded file-info length overflows int32")
-	}
-
-	if err := binary.Write(w.destination, binary.LittleEndian, int32(encodedLength)); err != nil {
+	if err := binary.Write(w.destination, binary.LittleEndian, encodedLength); err != nil {
 		return err
 	}
 	if _, err := w.destination.Write(fileInfo); err != nil {

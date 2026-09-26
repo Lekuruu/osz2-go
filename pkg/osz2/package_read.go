@@ -110,7 +110,7 @@ func (r *Reader) readMetadata(stream io.ReadSeeker) error {
 
 	// With the bytes we just collected we
 	// can now verify the metadata checksum
-	hash := computeOszHash(raw.Bytes(), int(count)*3, 0xa7)
+	hash := computeMetadataHash(raw.Bytes(), int(count))
 
 	if hash != r.info.MetadataHash {
 		return errors.New("osz2: metadata hash mismatch")
@@ -185,12 +185,9 @@ func (r *Reader) readEntries(stream io.ReadSeeker, beatmapIDs map[string]int32) 
 		return fmt.Errorf("osz2: read file-info length: %w", err)
 	}
 
-	length := int64(encodedLength)
-	for i := 0; i < md5.Size; i += 2 {
-		length -= int64(r.info.FileInfoHash[i]) | int64(r.info.FileInfoHash[i+1])<<17
-	}
-	if length < 0 {
-		return fmt.Errorf("osz2: invalid file-info length %d", length)
+	length, err := decodeFileInfoLength(encodedLength, r.info.FileInfoHash)
+	if err != nil {
+		return err
 	}
 
 	fileInfoStart, err := stream.Seek(0, io.SeekCurrent)
@@ -229,7 +226,7 @@ func (r *Reader) parseFileInfo(encryptedInfo []byte, beatmapIDs map[string]int32
 		return fmt.Errorf("osz2: file count %d exceeds the file-info table", count)
 	}
 
-	fileInfoHash := computeOszHash(encryptedInfo, int(count)*4, 0xd1)
+	fileInfoHash := computeFileInfoHash(encryptedInfo, int(count))
 	if fileInfoHash != r.info.FileInfoHash {
 		return errors.New("osz2: file-info hash mismatch")
 	}
