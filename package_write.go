@@ -60,7 +60,10 @@ func (p *Package) Export() ([]byte, error) {
 	p.updateOffsets(files)
 
 	fileData := writeAndEncryptFileData(files, keyArray)
-	fileInfo := writeAndEncryptFileInfo(files, keyArray)
+	fileInfo, err := writeAndEncryptFileInfo(files, keyArray)
+	if err != nil {
+		return nil, err
+	}
 
 	hashInfo := computeOszHash(fileInfo, len(files)*4, 0xD1)
 	videoOffset, hasVideoOffset := parseMetadataInt(p.Metadata, VideoDataOffset)
@@ -101,7 +104,7 @@ func (p *Package) Export() ([]byte, error) {
 
 	beatmapFiles := make([]*FileInfo, 0)
 	for _, file := range files {
-		if file.IsBeatmap() {
+		if isBeatmapFile(file) {
 			beatmapFiles = append(beatmapFiles, file)
 		}
 	}
@@ -167,7 +170,7 @@ func (p *Package) prepareExportFiles() []*FileInfo {
 
 		if beatmapID, ok := p.FileNames[name]; ok {
 			info.BeatmapID = beatmapID
-		} else if info.IsBeatmap() && info.BeatmapID == 0 {
+		} else if isBeatmapFile(info) && info.BeatmapID == 0 {
 			info.BeatmapID = -1
 		}
 
@@ -220,7 +223,7 @@ func writeAndEncryptFileData(files []*FileInfo, key []uint32) []byte {
 	return writer.Bytes()
 }
 
-func writeAndEncryptFileInfo(files []*FileInfo, key []uint32) []byte {
+func writeAndEncryptFileInfo(files []*FileInfo, key []uint32) ([]byte, error) {
 	writer := NewXXTEAWriter(key)
 	binary.Write(writer, binary.LittleEndian, int32(len(files)))
 	if len(files) > 0 {
@@ -237,13 +240,21 @@ func writeAndEncryptFileInfo(files []*FileInfo, key []uint32) []byte {
 			writer.Write(h)
 		}
 
-		binary.Write(writer, binary.LittleEndian, datetimeToDotNetBinary(file.DateCreated))
-		binary.Write(writer, binary.LittleEndian, datetimeToDotNetBinary(file.DateModified))
+		dateCreated, err := datetimeToDotNetBinary(file.DateCreated)
+		if err != nil {
+			return nil, fmt.Errorf("encode creation time for %q: %w", file.FileName, err)
+		}
+		dateModified, err := datetimeToDotNetBinary(file.DateModified)
+		if err != nil {
+			return nil, fmt.Errorf("encode modification time for %q: %w", file.FileName, err)
+		}
+		binary.Write(writer, binary.LittleEndian, dateCreated)
+		binary.Write(writer, binary.LittleEndian, dateModified)
 		if i < len(files)-1 {
 			binary.Write(writer, binary.LittleEndian, files[i+1].Offset)
 		}
 	}
-	return writer.Bytes()
+	return writer.Bytes(), nil
 }
 
 func (p *Package) writeMetadata() []byte {

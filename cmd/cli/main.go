@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/Lekuruu/osz2-go"
 )
@@ -45,31 +48,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create output directory
-	if err := os.MkdirAll(*outputDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
+	metadataPath, err := resolveMetadataPath(*outputDir, *metadataFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error validating metadata path: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Extract files
 	files := pkg.Files()
 	fmt.Printf("Extracting %d files to %s...\n", len(files), *outputDir)
+
+	if err := extractFiles(*outputDir, files); err != nil {
+		fmt.Fprintf(os.Stderr, "Error extracting files: %v\n", err)
+		os.Exit(1)
+	}
 	for fileName, content := range files {
-		outputPath := filepath.Join(*outputDir, fileName)
-
-		// Create subdirectories if needed
-		if dir := filepath.Dir(outputPath); dir != "." {
-			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating directory for %s: %v\n", fileName, err)
-				continue
-			}
-		}
-
-		// Write file
-		if err := os.WriteFile(outputPath, content, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing file %s: %v\n", fileName, err)
-			continue
-		}
 		fmt.Printf("  -> %s (%d bytes)\n", fileName, len(content))
 	}
 
@@ -77,18 +70,13 @@ func main() {
 	metadata := buildMetadata(pkg)
 
 	// Write metadata to JSON file
-	metadataPath := *metadataFile
-	if !filepath.IsAbs(metadataPath) {
-		metadataPath = filepath.Join(*outputDir, metadataPath)
-	}
-
 	jsonData, err := json.MarshalIndent(metadata, "", "    ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling metadata to JSON: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(metadataPath, jsonData, 0644); err != nil {
+	if err := writeMetadataFile(*outputDir, *metadataFile, jsonData); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing metadata file: %v\n", err)
 		os.Exit(1)
 	}
@@ -117,4 +105,91 @@ func printHelp() {
 	fmt.Println("Example:")
 	fmt.Println("  osz2-cli -input beatmap.osz2 -output ./extracted")
 	fmt.Println("  osz2-cli -input beatmap.osz2 -output ./extracted -metadata info.json")
+}
+
+func extractFiles(outputDir string, files map[string][]byte) error {
+	targets := make(map[string][]byte, len(files))
+	for fileName, content := range files {
+		target, err := normalizeExtractionPath(fileName)
+		if err != nil {
+			return err
+		}
+		if _, exists := targets[target]; exists {
+			return fmt.Errorf("multiple package files resolve to %q", target)
+		}
+		targets[target] = content
+	}
+
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+	root, err := os.OpenRoot(outputDir)
+	if err != nil {
+		return fmt.Errorf("open output directory: %w", err)
+	}
+	defer root.Close()
+
+	for target, content := range targets {
+		if dir := path.Dir(target); dir != "." {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("create directory for %q: %w", target, err)
+			}
+		}
+		if err := root.WriteFile(target, content, 0o644); err != nil {
+			return fmt.Errorf("write %q: %w", target, err)
+		}
+	}
+	return nil
+}
+
+func normalizeExtractionPath(fileName string) (string, error) {
+	normalized := strings.ReplaceAll(fileName, `\`, "/")
+	if normalized == "" || strings.ContainsRune(normalized, 0) || path.IsAbs(normalized) || hasWindowsDrivePrefix(normalized) {
+		return "", fmt.Errorf("unsafe package path %q", fileName)
+	}
+
+	target := path.Clean(normalized)
+	if target == "." || !fs.ValidPath(target) {
+		return "", fmt.Errorf("unsafe package path %q", fileName)
+	}
+	return target, nil
+}
+
+func resolveMetadataPath(outputDir, metadataPath string) (string, error) {
+	if filepath.IsAbs(metadataPath) {
+		return filepath.Clean(metadataPath), nil
+	}
+	target, err := normalizeExtractionPath(metadataPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(outputDir, filepath.FromSlash(target)), nil
+}
+
+func writeMetadataFile(outputDir, metadataPath string, data []byte) error {
+	if filepath.IsAbs(metadataPath) {
+		return os.WriteFile(metadataPath, data, 0o644)
+	}
+	target, err := normalizeExtractionPath(metadataPath)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(outputDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if dir := path.Dir(target); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return root.WriteFile(target, data, 0o644)
+}
+
+func hasWindowsDrivePrefix(name string) bool {
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	return name[0] >= 'a' && name[0] <= 'z' || name[0] >= 'A' && name[0] <= 'Z'
 }

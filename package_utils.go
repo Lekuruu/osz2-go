@@ -3,6 +3,8 @@ package osz2
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -18,9 +20,12 @@ func readString(r io.Reader) (string, error) {
 	if length == 0 {
 		return "", nil
 	}
+	if err := validateReadLength(r, length); err != nil {
+		return "", err
+	}
 
 	data := make([]byte, length)
-	if _, err := r.Read(data); err != nil {
+	if _, err := io.ReadFull(r, data); err != nil {
 		return "", err
 	}
 
@@ -49,6 +54,9 @@ func readStringFromBuffer(r io.Reader) (string, error) {
 	if length == 0 {
 		return "", nil
 	}
+	if err := validateReadLength(r, length); err != nil {
+		return "", err
+	}
 
 	data := make([]byte, length)
 	_, err = io.ReadFull(r, data)
@@ -65,44 +73,26 @@ func writeStringToBuffer(buf *bytes.Buffer, s string) {
 }
 
 func read7BitEncodedInt(r io.Reader) (int, error) {
-	var result int
-	var shift uint
-
-	for {
-		b := make([]byte, 1)
-		if _, err := r.Read(b); err != nil {
+	var result uint32
+	b := make([]byte, 1)
+	for i := range 5 {
+		if _, err := io.ReadFull(r, b); err != nil {
 			return 0, err
 		}
-
-		result |= int(b[0]&0x7F) << shift
-		if b[0]&0x80 == 0 {
-			break
+		if i == 4 && b[0] > 0x07 {
+			return 0, errors.New("7-bit encoded integer overflow")
 		}
-		shift += 7
-	}
 
-	return result, nil
+		result |= uint32(b[0]&0x7F) << (7 * i)
+		if b[0]&0x80 == 0 {
+			return int(result), nil
+		}
+	}
+	return 0, errors.New("7-bit encoded integer overflow")
 }
 
 func read7BitEncodedIntFromBuffer(r io.Reader) (int, error) {
-	var result int
-	var shift uint
-	b := make([]byte, 1)
-
-	for {
-		_, err := r.Read(b)
-		if err != nil {
-			return 0, err
-		}
-
-		result |= int(b[0]&0x7F) << shift
-		if b[0]&0x80 == 0 {
-			break
-		}
-		shift += 7
-	}
-
-	return result, nil
+	return read7BitEncodedInt(r)
 }
 
 func write7BitEncodedInt(buf *bytes.Buffer, value int) {
@@ -170,26 +160,32 @@ func computeBodyHash(data []byte, videoOffset, videoLength *int) []byte {
 	return computeOszHash(toHash, pos, 0x9F)
 }
 
-func convertFromDotNetBinary(binary int64) time.Time {
-	// .NET DateTime ticks are 100-nanosecond intervals since January 1, 0001
-	// Unix epoch is January 1, 1970, which is 621,355,968,000,000,000 ticks after January 1, 0001
-	const dotNetToUnixEpochTicks = 621355968000000000
+func convertFromDotNetBinary(value int64) time.Time {
+	const (
+		dotNetToUnixEpochTicks = int64(621_355_968_000_000_000)
+		ticksPerSecond         = int64(10_000_000)
+	)
 
-	// Extract the ticks (lower 62 bits) and ignore the Kind flags (upper 2 bits)
-	ticks := binary & 0x3FFFFFFFFFFFFFFF
+	ticks := value & 0x3FFFFFFFFFFFFFFF
+	unixTicks := ticks - dotNetToUnixEpochTicks
+	seconds := unixTicks / ticksPerSecond
+	nanoseconds := unixTicks % ticksPerSecond * 100
 
-	// Convert to Unix timestamp (nanoseconds)
-	unixNanos := (ticks - dotNetToUnixEpochTicks) * 100
-
-	return time.Unix(0, unixNanos).UTC()
+	return time.Unix(seconds, nanoseconds).UTC()
 }
 
-func datetimeToDotNetBinary(t time.Time) int64 {
-	t = t.UTC()
-	base := time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
-	delta := t.Sub(base)
-	ticks := delta.Nanoseconds() / 100
-	return ticks & 0x3FFFFFFFFFFFFFFF
+func datetimeToDotNetBinary(t time.Time) (int64, error) {
+	const (
+		dotNetToUnixEpochTicks = int64(621_355_968_000_000_000)
+		ticksPerSecond         = int64(10_000_000)
+	)
+
+	if t.Year() < 1 || t.Year() > 9999 {
+		return 0, fmt.Errorf("timestamp year %d is outside the .NET DateTime range", t.Year())
+	}
+
+	ticks := dotNetToUnixEpochTicks + t.Unix()*ticksPerSecond + int64(t.Nanosecond()/100)
+	return ticks, nil
 }
 
 func parseMetadataInt(metadata map[MetaType]string, key MetaType) (int, bool) {
@@ -212,4 +208,39 @@ func sanitizeFilename(filename string) string {
 		cleaned = strings.ReplaceAll(cleaned, "..\\", "")
 	}
 	return cleaned
+}
+
+func validateReadLength(r io.Reader, length int) error {
+	type HasLength interface{ Len() int } // yea idk what else to call this
+
+	// Try to determine length from reader Len() if provided
+	if remainingReader, ok := r.(HasLength); ok {
+		remaining := remainingReader.Len()
+		if remaining >= 0 && length > remaining {
+			return fmt.Errorf("declared length %d exceeds remaining data %d", length, remaining)
+		}
+		return nil
+	}
+
+	// Try to determine length from seeker
+	seeker, ok := r.(io.Seeker)
+	if !ok {
+		return nil
+	}
+
+	current, err := seeker.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	end, err := seeker.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if _, err := seeker.Seek(current, io.SeekStart); err != nil {
+		return err
+	}
+	if end < current || int64(length) > end-current {
+		return fmt.Errorf("declared length %d exceeds remaining data %d", length, end-current)
+	}
+	return nil
 }

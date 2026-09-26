@@ -1,3 +1,4 @@
+// Package osz2 provides utilities to work with osz2 & osf2 files
 package osz2
 
 import (
@@ -162,10 +163,9 @@ func (p *Package) AddFile(filename string, content []byte, dateCreated, dateModi
 func (p *Package) AddFileInfo(info *FileInfo) {
 	p.FileInfos[info.FileName] = info
 
-	if info.IsBeatmap() {
+	if isBeatmapFile(info) {
 		if _, exists := p.FileNames[info.FileName]; !exists {
 			p.FileNames[info.FileName] = -1
-			p.FileIDs[-1] = info.FileName
 			info.BeatmapID = -1
 		}
 		if beatmapID, exists := p.FileNames[info.FileName]; exists {
@@ -247,7 +247,9 @@ func (p *Package) RemoveFile(filename string) bool {
 
 	if beatmapID, exists := p.FileNames[filename]; exists {
 		delete(p.FileNames, filename)
-		delete(p.FileIDs, beatmapID)
+		if owner, ok := p.FileIDs[beatmapID]; ok && owner == filename {
+			delete(p.FileIDs, beatmapID)
+		}
 	}
 	return true
 }
@@ -282,15 +284,24 @@ func (p *Package) SetBeatmapID(filename string, beatmapID int32) error {
 	if info == nil {
 		return fmt.Errorf("file info is nil: %s", filename)
 	}
-	if !info.IsBeatmap() {
+	if !isBeatmapFile(info) {
 		return fmt.Errorf("file is not a beatmap: %s", filename)
+	}
+	if beatmapID != -1 {
+		if owner, exists := p.FileIDs[beatmapID]; exists && owner != filename {
+			return fmt.Errorf("beatmap ID %d is already assigned to %s", beatmapID, owner)
+		}
 	}
 
 	if oldID, ok := p.FileNames[filename]; ok {
-		delete(p.FileIDs, oldID)
+		if owner, exists := p.FileIDs[oldID]; exists && owner == filename {
+			delete(p.FileIDs, oldID)
+		}
 	}
 	p.FileNames[filename] = beatmapID
-	p.FileIDs[beatmapID] = filename
+	if beatmapID != -1 {
+		p.FileIDs[beatmapID] = filename
+	}
 	if info, exists := p.FileInfos[filename]; exists && info != nil {
 		info.BeatmapID = beatmapID
 	}
@@ -346,4 +357,43 @@ func (p *Package) CreateOszPackage(excludeDisallowedFiles bool) ([]byte, error) 
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func (p *Package) validateBeatmapMappings() error {
+	for fileName, beatmapID := range p.FileNames {
+		info, exists := p.FileInfos[fileName]
+		if !exists || !isBeatmapFile(info) {
+			return fmt.Errorf("beatmap mapping references missing or invalid file %q", fileName)
+		}
+		if info.BeatmapID != beatmapID {
+			return fmt.Errorf("beatmap ID mismatch for %q", fileName)
+		}
+		if beatmapID != -1 {
+			if owner, ok := p.FileIDs[beatmapID]; !ok || owner != fileName {
+				return fmt.Errorf("missing reverse mapping for beatmap ID %d", beatmapID)
+			}
+		}
+	}
+
+	for fileName, info := range p.FileInfos {
+		if isBeatmapFile(info) {
+			if _, exists := p.FileNames[fileName]; !exists {
+				return fmt.Errorf("beatmap file %q has no ID mapping", fileName)
+			}
+		}
+	}
+
+	for beatmapID, fileName := range p.FileIDs {
+		if beatmapID == -1 {
+			return fmt.Errorf("unassigned beatmap %q has a reverse mapping", fileName)
+		}
+		if mappedID, exists := p.FileNames[fileName]; !exists || mappedID != beatmapID {
+			return fmt.Errorf("invalid reverse mapping for beatmap ID %d", beatmapID)
+		}
+	}
+	return nil
+}
+
+func isBeatmapFile(info *FileInfo) bool {
+	return info != nil && (info.IsBeatmap() || info.IsCombinedBeatmap())
 }

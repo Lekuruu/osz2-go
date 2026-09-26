@@ -11,7 +11,7 @@ import (
 func (p *Package) read(r io.ReadSeeker) error {
 	// Read identifier (magic number)
 	identifier := make([]byte, 3)
-	if _, err := r.Read(identifier); err != nil {
+	if _, err := io.ReadFull(r, identifier); err != nil {
 		return err
 	}
 
@@ -25,13 +25,13 @@ func (p *Package) read(r io.ReadSeeker) error {
 
 	// Read unused version byte
 	version := make([]byte, 1)
-	if _, err := r.Read(version); err != nil {
+	if _, err := io.ReadFull(r, version); err != nil {
 		return err
 	}
 	p.Version = version[0]
 
 	// Read IV
-	if _, err := r.Read(p.IV); err != nil {
+	if _, err := io.ReadFull(r, p.IV); err != nil {
 		return err
 	}
 
@@ -40,13 +40,13 @@ func (p *Package) read(r io.ReadSeeker) error {
 	p.FileInfoHash = make([]byte, 16)
 	p.FullBodyHash = make([]byte, 16)
 
-	if _, err := r.Read(p.MetaDataHash); err != nil {
+	if _, err := io.ReadFull(r, p.MetaDataHash); err != nil {
 		return err
 	}
-	if _, err := r.Read(p.FileInfoHash); err != nil {
+	if _, err := io.ReadFull(r, p.FileInfoHash); err != nil {
 		return err
 	}
-	if _, err := r.Read(p.FullBodyHash); err != nil {
+	if _, err := io.ReadFull(r, p.FullBodyHash); err != nil {
 		return err
 	}
 
@@ -78,6 +78,9 @@ func (p *Package) readMetadata(r io.ReadSeeker) error {
 	var count int32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
 		return err
+	}
+	if count < 0 {
+		return fmt.Errorf("invalid metadata count: %d", count)
 	}
 
 	// Buffer to store data for hash verification
@@ -122,6 +125,9 @@ func (p *Package) readFileNames(r io.ReadSeeker) error {
 	if err := binary.Read(r, binary.LittleEndian, &mapsCount); err != nil {
 		return err
 	}
+	if mapsCount < 0 {
+		return fmt.Errorf("invalid beatmap count: %d", mapsCount)
+	}
 
 	// Read all maps in .osz2 and add them to dictionaries
 	for range mapsCount {
@@ -134,9 +140,17 @@ func (p *Package) readFileNames(r io.ReadSeeker) error {
 		if err := binary.Read(r, binary.LittleEndian, &beatmapID); err != nil {
 			return err
 		}
+		if _, exists := p.FileNames[fileName]; exists {
+			return fmt.Errorf("duplicate beatmap filename: %q", fileName)
+		}
+		if beatmapID != -1 {
+			if owner, exists := p.FileIDs[beatmapID]; exists {
+				return fmt.Errorf("beatmap ID %d is assigned to both %q and %q", beatmapID, owner, fileName)
+			}
+			p.FileIDs[beatmapID] = fileName
+		}
 
 		p.FileNames[fileName] = beatmapID
-		p.FileIDs[beatmapID] = fileName
 		if info, ok := p.FileInfos[fileName]; ok && info != nil {
 			info.BeatmapID = beatmapID
 		}
@@ -154,7 +168,7 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 
 	// Read and decrypt magic encrypted bytes
 	plain := make([]byte, 64)
-	if _, err := r.Read(plain); err != nil {
+	if _, err := io.ReadFull(r, plain); err != nil {
 		return err
 	}
 	xtea.Decrypt(plain, 0, 64)
@@ -173,20 +187,33 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 	for i := 0; i < 16; i += 2 {
 		length -= int32(p.FileInfoHash[i]) | (int32(p.FileInfoHash[i+1]) << 17)
 	}
+	if length < 0 {
+		return fmt.Errorf("invalid file info length: %d", length)
+	}
+
+	fileInfoStart, err := r.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	totalSize, err := r.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if _, err := r.Seek(fileInfoStart, io.SeekStart); err != nil {
+		return err
+	}
+	if totalSize < fileInfoStart || int64(length) > totalSize-fileInfoStart {
+		return fmt.Errorf("file info length %d exceeds remaining package data", length)
+	}
 
 	// Read all .osu files info
 	fileInfo := make([]byte, length)
-	if _, err := r.Read(fileInfo); err != nil {
+	if _, err := io.ReadFull(r, fileInfo); err != nil {
 		return err
 	}
 
 	// Get file start offset
-	fileOffset, _ := r.Seek(0, io.SeekCurrent)
-
-	// Get total file size
-	currentPos, _ := r.Seek(0, io.SeekCurrent)
-	totalSize, _ := r.Seek(0, io.SeekEnd)
-	r.Seek(currentPos, io.SeekStart)
+	fileOffset := fileInfoStart + int64(length)
 
 	// Create an XXTEA reader from the encrypted fileInfo bytes
 	// This matches the C# approach where XXTeaStream wraps the MemoryStream
@@ -197,7 +224,7 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 	fileInfoReader := NewXXTEAReader(bytes.NewReader(fileInfo), keyArray)
 
 	// Parse the file info using the streaming XXTEA reader
-	err := p.parseFileInfo(
+	err = p.parseFileInfo(
 		fileInfoReader, fileInfo,
 		int(fileOffset), int(totalSize),
 	)
@@ -211,9 +238,17 @@ func (p *Package) readFiles(r io.ReadSeeker) error {
 }
 
 func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffset int, totalSize int) error {
+	if fileOffset < 0 || totalSize < fileOffset || totalSize-fileOffset >= 1<<31 {
+		return fmt.Errorf("invalid file data bounds: offset %d, total size %d", fileOffset, totalSize)
+	}
+	fileDataSize := int32(totalSize - fileOffset)
+
 	var count int32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
 		return err
+	}
+	if count <= 0 {
+		return fmt.Errorf("invalid file count: %d", count)
 	}
 
 	// Verify file info hash
@@ -226,15 +261,21 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 	if err := binary.Read(r, binary.LittleEndian, &currentOffset); err != nil {
 		return err
 	}
+	if currentOffset != 0 {
+		return fmt.Errorf("invalid first file offset: %d", currentOffset)
+	}
 
 	for i := range count {
 		fileName, err := readStringFromBuffer(r)
 		if err != nil {
 			return err
 		}
+		if _, exists := p.FileInfos[fileName]; exists {
+			return fmt.Errorf("duplicate file info filename: %q", fileName)
+		}
 
 		fileHash := make([]byte, 16)
-		if _, err := r.Read(fileHash); err != nil {
+		if _, err := io.ReadFull(r, fileHash); err != nil {
 			return err
 		}
 
@@ -259,10 +300,16 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 			}
 		} else {
 			// For last file, calculate size differently - use total file size minus file offset
-			nextOffset = int32(totalSize - fileOffset)
+			nextOffset = fileDataSize
+		}
+		if nextOffset < currentOffset || nextOffset > fileDataSize {
+			return fmt.Errorf("invalid offset for file %q: %d after %d", fileName, nextOffset, currentOffset)
 		}
 
 		fileLength := nextOffset - currentOffset
+		if fileLength < 4 {
+			return fmt.Errorf("invalid size for file %q: %d", fileName, fileLength)
+		}
 
 		info := NewFileInfo(
 			fileName, currentOffset, fileLength,
@@ -277,7 +324,7 @@ func (p *Package) parseFileInfo(r io.Reader, encryptedFileInfo []byte, fileOffse
 		currentOffset = nextOffset
 	}
 
-	return nil
+	return p.validateBeatmapMappings()
 }
 
 func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
@@ -285,8 +332,7 @@ func (p *Package) readFileContents(r io.ReadSeeker, fileOffset int) error {
 		content := make([]byte, fileInfo.Size-4) // -4 because of the encrypted length prefix
 		_, err := readEncryptedEntryContent(r, fileOffset+int(fileInfo.Offset), p.key, content)
 		if err != nil {
-			fmt.Printf("Failed to read: %s\n", fileName)
-			continue
+			return fmt.Errorf("read file %q: %w", fileName, err)
 		}
 
 		if info, ok := p.FileInfos[fileName]; ok && info != nil {
@@ -316,17 +362,18 @@ func readEncryptedEntryContent(reader io.ReadSeeker, offset int, key []byte, buf
 		return 0, err
 	}
 
-	count := min(len(buffer), entryLength)
-
-	if count == 0 {
-		return 0, io.EOF
+	if entryLength != len(buffer) {
+		return 0, fmt.Errorf("entry length %d does not match file table length %d", entryLength, len(buffer))
+	}
+	if entryLength == 0 {
+		return 0, nil
 	}
 	if _, err := reader.Seek(int64(offset+4), io.SeekStart); err != nil {
 		return 0, err
 	}
-	if _, err := io.ReadFull(reader, buffer[:count]); err != nil {
+	if _, err := io.ReadFull(reader, buffer); err != nil {
 		return 0, err
 	}
-	xxtea.Decrypt(buffer, 0, count)
-	return count, nil
+	xxtea.Decrypt(buffer, 0, entryLength)
+	return entryLength, nil
 }
