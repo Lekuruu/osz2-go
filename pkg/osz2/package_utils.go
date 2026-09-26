@@ -143,7 +143,7 @@ func parseMetadataInt(metadata map[MetaType]string, key MetaType) (int, bool) {
 	return parsed, true
 }
 
-func bodyHashExclusion(metadata map[MetaType]string, total int64) (start, length int64) {
+func bodyHashExclusion(metadata Metadata, total int64) (start, length int64) {
 	startValue, hasStart := parseMetadataInt(metadata, VideoDataOffset)
 	lengthValue, hasLength := parseMetadataInt(metadata, VideoDataLength)
 	if !hasStart || !hasLength || startValue < 0 || lengthValue < 0 {

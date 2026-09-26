@@ -28,7 +28,7 @@ func (keyType KeyType) String() string {
 }
 
 // Generate derives the 16-byte package encryption key from its metadata.
-func (keyType KeyType) Generate(metadata map[MetaType]string) ([md5.Size]byte, error) {
+func (keyType KeyType) Generate(metadata Metadata) ([md5.Size]byte, error) {
 	switch keyType {
 	// Regular .osz2 files, mainly used for beatmap submission
 	// Requires: Creator & BeatmapSetID metadata fields
