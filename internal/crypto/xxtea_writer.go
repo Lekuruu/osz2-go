@@ -1,14 +1,14 @@
-package osz2
+package crypto
 
 import "bytes"
 
-// XXTEAWriter provides streaming XXTEA encryption
+// XXTEAWriter encrypts each Write call as a separate frame.
 type XXTEAWriter struct {
 	buf   bytes.Buffer
 	xxtea *XXTEA
 }
 
-// NewXXTEAWriter creates a new XXTEA writer with the provided key
+// NewXXTEAWriter creates a framed writer with the provided key.
 func NewXXTEAWriter(key []uint32) *XXTEAWriter {
 	return &XXTEAWriter{xxtea: NewXXTEA(key)}
 }
