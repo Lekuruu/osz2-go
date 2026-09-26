@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"path"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -247,26 +245,4 @@ func copyOverlap(dst []byte, dstStart int64, src []byte, srcStart int64) {
 		dst[start-dstStart:end-dstStart],
 		src[start-srcStart:end-srcStart],
 	)
-}
-
-func (e *writeEntry) extension() string {
-	ext := path.Ext(e.path)
-	if ext == "" {
-		return ""
-	}
-	return strings.ToLower(ext[1:])
-}
-
-func (e *writeEntry) isBeatmapFile() bool {
-	switch e.extension() {
-	case "osu", "osc":
-		return true
-	default:
-		return false
-	}
-}
-
-func (e *writeEntry) isVideo() bool {
-	_, ok := videoFileExtensions[e.extension()]
-	return ok
 }

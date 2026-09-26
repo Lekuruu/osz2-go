@@ -41,6 +41,14 @@ type writeEntry struct {
 	videoHash  [md5.Size]byte
 }
 
+func (e *writeEntry) isBeatmapFile() bool {
+	return isBeatmapFileExtension(extensionOf(e.path))
+}
+
+func (e *writeEntry) isVideo() bool {
+	return isVideoExtension(extensionOf(e.path))
+}
+
 // NewWriter creates a writer. duhhh!!
 func NewWriter(destination io.Writer) (*Writer, error) {
 	if destination == nil {
