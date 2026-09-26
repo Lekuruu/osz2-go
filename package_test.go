@@ -2,8 +2,10 @@ package osz2
 
 import (
 	"bytes"
+	"crypto/md5"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,12 +57,10 @@ func TestPackagesOsf2(t *testing.T) {
 
 // testPackage tests parsing a single .osz2 file
 func testPackage(t *testing.T, filename string, key KeyType) {
-	// Check if file exists
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		t.Fatalf("Test file does not exist: %s", filename)
 	}
 
-	// Parse the package
 	t.Logf("Parsing package: %s", filename)
 	pkg, err := OpenReader(filename, key)
 	if err != nil {
@@ -68,13 +68,11 @@ func testPackage(t *testing.T, filename string, key KeyType) {
 	}
 	defer pkg.Close()
 
-	// Log metadata
 	t.Logf("Metadata entries: %d", len(pkg.Metadata()))
 	for metaType, value := range pkg.Metadata() {
 		t.Logf("  %v: %s", metaType, value)
 	}
 
-	// Check each file
 	fs, err := pkg.ReadDir(".")
 	if err != nil {
 		t.Fatalf("Failed to read filesystem: %v", err)
@@ -175,16 +173,33 @@ func TestPackageRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// TODO: Validate output
+			rewritten, err := NewReader(
+				bytes.NewReader(rewrittenData.Bytes()),
+				int64(rewrittenData.Len()),
+				KeyTypeOsz2,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rewritten.Verify(); err != nil {
+				t.Fatal(err)
+			}
+			if !maps.Equal(original.Metadata(), rewritten.Metadata()) {
+				t.Fatalf("metadata mismatch, original: %v, rewritten: %v", original.Metadata(), rewritten.Metadata())
+			}
+
+			originalChecksums := packageChecksums(t, original)
+			rewrittenChecksums := packageChecksums(t, rewritten)
+			if !maps.Equal(originalChecksums, rewrittenChecksums) {
+				t.Fatalf("file checksum mismatch, original: %v,rewritten: %v", originalChecksums, rewrittenChecksums)
+			}
 		})
 	}
 }
 
-// BenchmarkParsePackage benchmarks package parsing
 func BenchmarkParsePackage(b *testing.B) {
 	testFile := "tests/nekodex - welcome to christmas.osz2"
 
-	// Check if file exists
 	stat, err := os.Stat(testFile)
 	if os.IsNotExist(err) {
 		b.Skip("Test file does not exist")
@@ -206,4 +221,25 @@ func BenchmarkParsePackage(b *testing.B) {
 
 		file.Close()
 	}
+}
+
+func packageChecksums(t *testing.T, reader *Reader) map[string][md5.Size]byte {
+	t.Helper()
+
+	checksums := make(map[string][md5.Size]byte)
+	err := fs.WalkDir(reader, ".", func(name string, dirEntry fs.DirEntry, err error) error {
+		if err != nil || dirEntry.IsDir() {
+			return err
+		}
+		content, err := fs.ReadFile(reader, name)
+		if err != nil {
+			return err
+		}
+		checksums[name] = md5.Sum(content)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return checksums
 }
