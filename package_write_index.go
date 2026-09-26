@@ -96,12 +96,14 @@ func (w *Writer) finalizeIndex() error {
 		}
 	}
 
+	var videoOffset int64
 	for _, entry := range w.entries {
 		if !entry.isVideo() {
+			videoOffset += entry.size
 			continue
 		}
 
-		w.metadata[VideoDataOffset] = strconv.FormatInt(int64(entry.offset), 10)
+		w.metadata[VideoDataOffset] = strconv.FormatInt(videoOffset, 10)
 		w.metadata[VideoDataLength] = strconv.FormatInt(entry.size, 10)
 		w.metadata[VideoHash] = fmt.Sprintf("%X", entry.videoHash[:])
 		break
