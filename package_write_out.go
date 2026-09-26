@@ -219,7 +219,7 @@ func streamEncryptedFrame(
 		remaining -= blockSize
 	}
 
-	// Make sure the file hasn't changed since AddFS indexed it
+	// Make sure the file hasn't changed since SetFS indexed it
 	var extra [1]byte
 	n, err := source.Read(extra[:])
 	if n != 0 || err != io.EOF {
