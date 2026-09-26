@@ -21,7 +21,7 @@ func (key KeyType) Generate(metadata map[MetaType]string) ([]byte, error) {
 			return nil, errors.New("missing required metadata for osz2 key generation: Creator and BeatmapSetID")
 		}
 		seed := creator + "yhxyfjo5" + beatmapSetID
-		return ComputeHashBytesRaw([]byte(seed)), nil
+		return ComputeHashBytesRaw(encodeToASCII(seed)), nil
 	// .osf2 files, used for beatmap packages inside osu!stream
 	// Requires: Title & Artist metadata fields
 	case KeyTypeOsf2:
@@ -31,8 +31,21 @@ func (key KeyType) Generate(metadata map[MetaType]string) ([]byte, error) {
 			return nil, errors.New("missing required metadata for osf2 key generation: Title and Artist")
 		}
 		seed := "\x08" + title + "4390gn8931i" + artist
-		return ComputeHashBytesRaw([]byte(seed)), nil
+		return ComputeHashBytesRaw(encodeToASCII(seed)), nil
 	default:
 		return nil, errors.New("unsupported key type")
 	}
+}
+
+func encodeToASCII(value string) []byte {
+	result := make([]byte, 0, len(value))
+	for _, r := range value {
+		if r > 0x7f {
+			// C# is using Encoding.ASCII which replaces non-ascii characters with '?'
+			result = append(result, '?')
+			continue
+		}
+		result = append(result, byte(r))
+	}
+	return result
 }
