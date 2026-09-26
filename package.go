@@ -57,7 +57,7 @@ func (r *ReadCloser) Close() error {
 	return err
 }
 
-// OpenReader opens name as an osz2 / osf2 filesystem.
+// OpenReader opens a file as an osz2 / osf2 filesystem.
 func OpenReader(name string, keyType KeyType) (*ReadCloser, error) {
 	file, err := os.Open(name)
 	if err != nil {
@@ -77,7 +77,7 @@ func OpenReader(name string, keyType KeyType) (*ReadCloser, error) {
 	return &ReadCloser{Reader: reader, handle: file}, nil
 }
 
-// NewReader returns an osz2 / osf2 package from a random-access reader source.
+// NewReader returns an osz2 / osf2 filesystem from a reader source.
 func NewReader(source io.ReaderAt, size int64, keyType KeyType) (*Reader, error) {
 	if source == nil {
 		return nil, fmt.Errorf("osz2: nil package source")
@@ -121,7 +121,7 @@ func (r *Reader) Open(name string) (fs.File, error) {
 	return r.OpenEntry(name)
 }
 
-// OpenEntry opens name and returns our own File object.
+// OpenEntry opens the File from the given name.
 func (r *Reader) OpenEntry(name string) (*File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
@@ -133,25 +133,13 @@ func (r *Reader) OpenEntry(name string) (*File, error) {
 	return &File{reader: r, entry: entry}, nil
 }
 
-// OpenBeatmap opens the entry assigned to id.
+// OpenBeatmap opens the File assigned to the given beatmap ID.
 func (r *Reader) OpenBeatmap(id int32) (*File, error) {
 	entry, ok := r.beatmaps[id]
 	if !ok {
 		return nil, &fs.PathError{Op: "open", Path: fmt.Sprintf("beatmap:%d", id), Err: fs.ErrNotExist}
 	}
 	return r.OpenEntry(entry.path)
-}
-
-// Entry returns metadata for name without opening its contents.
-func (r *Reader) Entry(name string) (*Entry, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrInvalid}
-	}
-	entry, ok := r.entries[name]
-	if !ok {
-		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrNotExist}
-	}
-	return entry, nil
 }
 
 // Stat implements fs.StatFS.
@@ -163,8 +151,20 @@ func (r *Reader) Stat(name string) (fs.FileInfo, error) {
 	return entry, nil
 }
 
-// EntryByBeatmapID returns the entry assigned to id.
-func (r *Reader) EntryByBeatmapID(id int32) (*Entry, bool) {
+// Entry returns file metadata without opening its contents.
+func (r *Reader) Entry(name string) (*Entry, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrInvalid}
+	}
+	entry, ok := r.entries[name]
+	if !ok {
+		return nil, &fs.PathError{Op: "entry", Path: name, Err: fs.ErrNotExist}
+	}
+	return entry, nil
+}
+
+// EntryForBeatmap returns the file metadata assigned to the given beatmap ID.
+func (r *Reader) EntryForBeatmap(id int32) (*Entry, bool) {
 	entry, ok := r.beatmaps[id]
 	return entry, ok
 }
