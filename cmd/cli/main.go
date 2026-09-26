@@ -31,12 +31,6 @@ func run() int {
 		return 0
 	}
 
-	// Check if input file exists
-	if _, err := os.Stat(*inputFile); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: Input file does not exist: %s\n", *inputFile)
-		return 1
-	}
-
 	// Pick the encryption scheme from the file extension
 	var keyType osz2.KeyType
 	switch strings.ToLower(filepath.Ext(*inputFile)) {
@@ -59,11 +53,6 @@ func run() int {
 	defer reader.Close()
 
 	// Write out the metadata first before we extract any files
-	metadataPath, err := resolveMetadataPath(*outputDir, *metadataFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error validating metadata path: %v\n", err)
-		return 1
-	}
 	metadata, err := buildMetadata(reader.Reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building metadata: %v\n", err)
@@ -75,11 +64,12 @@ func run() int {
 		return 1
 	}
 
-	fmt.Printf("Writing metadata to %s...\n", metadataPath)
-	if err := writeMetadataFile(*outputDir, *metadataFile, jsonData); err != nil {
+	metadataPath, err := writeMetadataFile(*outputDir, *metadataFile, jsonData)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing metadata file: %v\n", err)
 		return 1
 	}
+	fmt.Printf("Wrote metadata to %s.\n", metadataPath)
 
 	// Extract files one at a time so large packages do not need to fit in memory
 	fmt.Printf("Extracting files to %s...\n", *outputDir)
@@ -191,36 +181,33 @@ func normalizeExtractionPath(fileName string) (string, error) {
 	return target, nil
 }
 
-func resolveMetadataPath(outputDir, metadataPath string) (string, error) {
+func writeMetadataFile(outputDir, metadataPath string, data []byte) (string, error) {
 	if filepath.IsAbs(metadataPath) {
-		return filepath.Clean(metadataPath), nil
+		target := filepath.Clean(metadataPath)
+		return target, os.WriteFile(target, data, 0o644)
 	}
+
 	target, err := normalizeExtractionPath(metadataPath)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(outputDir, filepath.FromSlash(target)), nil
-}
-
-func writeMetadataFile(outputDir, metadataPath string, data []byte) error {
-	if filepath.IsAbs(metadataPath) {
-		return os.WriteFile(metadataPath, data, 0o644)
-	}
-	target, err := normalizeExtractionPath(metadataPath)
-	if err != nil {
-		return err
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return "", err
 	}
 	root, err := os.OpenRoot(outputDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer root.Close()
 	if dir := path.Dir(target); dir != "." {
 		if err := root.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return root.WriteFile(target, data, 0o644)
+	if err := root.WriteFile(target, data, 0o644); err != nil {
+		return "", err
+	}
+	return filepath.Join(outputDir, filepath.FromSlash(target)), nil
 }
 
 func hasWindowsDrivePrefix(name string) bool {
