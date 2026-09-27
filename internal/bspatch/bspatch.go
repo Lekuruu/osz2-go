@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	headerSize = 32
-	magic      = "BSDIFF40"
+	headerSize      = 32
+	magic           = "BSDIFF40"
+	integerSignMask = uint64(1) << 63
 )
 
 // Patch applies patch to oldBinary and returns the resulting binary.
@@ -42,9 +43,9 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 		return nil, errors.New("corrupt patch: invalid magic")
 	}
 
-	controlLength := offtin(header[8:])
-	diffLength := offtin(header[16:])
-	newSize := offtin(header[24:])
+	controlLength := decodeInt64(header[8:])
+	diffLength := decodeInt64(header[16:])
+	newSize := decodeInt64(header[24:])
 
 	if controlLength < 0 || diffLength < 0 || newSize < 0 {
 		return nil, fmt.Errorf(
@@ -62,30 +63,31 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 	controlReader := bzip2.NewReader(controlPatch)
 
 	diffPatch := bytes.NewReader(patch)
-	if _, err := diffPatch.Seek(int64(headerSize+controlLength), io.SeekStart); err != nil {
+	if _, err := diffPatch.Seek(headerSize+controlLength, io.SeekStart); err != nil {
 		return nil, err
 	}
 	diffReader := bzip2.NewReader(diffPatch)
 
 	extraPatch := bytes.NewReader(patch)
-	if _, err := extraPatch.Seek(int64(headerSize+controlLength+diffLength), io.SeekStart); err != nil {
+	if _, err := extraPatch.Seek(headerSize+controlLength+diffLength, io.SeekStart); err != nil {
 		return nil, err
 	}
 	extraReader := bzip2.NewReader(extraPatch)
 
 	result := make([]byte, newSize)
-	oldSize := len(oldBinary)
-	oldPosition := 0
-	newPosition := 0
-	var encodedOffset [8]byte
-	var control [3]int
+	oldSize := int64(len(oldBinary))
+
+	var oldPosition int64
+	var newPosition int64
+	var encodedInteger [8]byte
+	var control [3]int64
 
 	for newPosition < newSize {
 		for i := range control {
-			if _, err := io.ReadFull(controlReader, encodedOffset[:]); err != nil {
+			if _, err := io.ReadFull(controlReader, encodedInteger[:]); err != nil {
 				return nil, fmt.Errorf("corrupt patch: read control data: %w", err)
 			}
-			control[i] = offtin(encodedOffset[:])
+			control[i] = decodeInt64(encodedInteger[:])
 		}
 
 		if newPosition+control[0] > newSize {
@@ -118,11 +120,12 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 	return result, nil
 }
 
-// offtin decodes a BSDIFF signed integer into an int.
-func offtin(buf []byte) int {
-	y := binary.LittleEndian.Uint64(buf)
-	if (y>>56)&0x80 != 0 {
-		return -int(y & 0x7FFFFFFF)
+// decodeInt64 decodes BSDIFF's 63-bit signed-magnitude integer format.
+func decodeInt64(buf []byte) int64 {
+	encoded := binary.LittleEndian.Uint64(buf)
+	magnitude := int64(encoded &^ integerSignMask)
+	if encoded&integerSignMask != 0 {
+		return -magnitude
 	}
-	return int(y & 0x7FFFFFFF)
+	return magnitude
 }
