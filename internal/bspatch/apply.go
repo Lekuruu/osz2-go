@@ -46,6 +46,9 @@ func applyPatch(
 		if control[1] < 0 {
 			return errors.New("corrupt patch: negative extra length")
 		}
+		if control[0] == 0 && control[1] == 0 {
+			return errors.New("corrupt patch: control data does not advance output")
+		}
 		if control[0] > newSize-newPosition {
 			return errors.New("corrupt patch: diff data exceeds output size")
 		}
