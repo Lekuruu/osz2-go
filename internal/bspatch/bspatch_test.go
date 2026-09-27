@@ -41,12 +41,23 @@ func TestPatch(t *testing.T) {
 		0xA4, 0x19, 0x82, 0x58, 0x5D, 0xC9, 0x14, 0xE1,
 		0x42, 0x41, 0x94, 0x94, 0xC1, 0x0C,
 	}
-	result, err := PatchBytes(oldBinary, patch, int64(len(expected)))
+
+	var result bytes.Buffer
+	outputSize, err := Patch(
+		bytes.NewReader(oldBinary),
+		bytes.NewReader(patch),
+		&result,
+		int64(len(expected)),
+		Bzip2Reader,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(result, expected) {
-		t.Fatalf("PatchBytes() = %v, want %v", result, expected)
+	if outputSize != int64(len(expected)) {
+		t.Fatalf("Patch() output size = %d, want %d", outputSize, len(expected))
+	}
+	if !bytes.Equal(result.Bytes(), expected) {
+		t.Fatalf("Patch() = %v, want %v", result.Bytes(), expected)
 	}
 }
 
