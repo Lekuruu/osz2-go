@@ -45,7 +45,7 @@ func OpenPatch(
 		return nil, errors.Join(original, temporary.Close())
 	}
 
-	err = bspatch.Patch(
+	size, err := bspatch.Patch(
 		sizedReaderAt{ReaderAt: source, size: sourceSize},
 		sizedReaderAt{ReaderAt: patch, size: patchSize},
 		temporary,
@@ -54,12 +54,6 @@ func OpenPatch(
 	)
 	if err != nil {
 		return cleanup(fmt.Errorf("osz2: apply patch: %w", err))
-	}
-
-	// Seek back to start & determine the size of the patched package
-	size, err := temporary.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return cleanup(fmt.Errorf("osz2: determine patched package size: %w", err))
 	}
 
 	// Open the patched package as an osz2 / osf2 filesystem

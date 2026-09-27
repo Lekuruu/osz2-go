@@ -44,7 +44,7 @@ func GzipReader(source io.Reader) (io.Reader, error) {
 // PatchBytes applies an in-memory BSDIFF40 patch.
 func PatchBytes(oldBinary, patch []byte, maxOutputSize int64) ([]byte, error) {
 	var output bytes.Buffer
-	err := Patch(
+	_, err := Patch(
 		bytes.NewReader(oldBinary),
 		bytes.NewReader(patch),
 		&output,
@@ -57,36 +57,37 @@ func PatchBytes(oldBinary, patch []byte, maxOutputSize int64) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-// Patch applies a patch while streaming the result to output.
+// Patch applies a patch while streaming the result to output and returns the
+// patched output size.
 func Patch(
 	oldBinary, patch SizedReaderAt,
 	output io.Writer,
 	maxOutputSize int64,
 	decompress Decompressor,
-) (err error) {
+) (outputSize int64, err error) {
 	if maxOutputSize < 0 {
-		return errors.New("maximum output size cannot be negative")
+		return 0, errors.New("maximum output size cannot be negative")
 	}
 	if oldBinary == nil {
-		return errors.New("old binary reader cannot be nil")
+		return 0, errors.New("old binary reader cannot be nil")
 	}
 	if patch == nil {
-		return errors.New("patch reader cannot be nil")
+		return 0, errors.New("patch reader cannot be nil")
 	}
 	if output == nil {
-		return errors.New("output writer cannot be nil")
+		return 0, errors.New("output writer cannot be nil")
 	}
 	if decompress == nil {
-		return errors.New("decompressor cannot be nil")
+		return 0, errors.New("decompressor cannot be nil")
 	}
 
 	oldSize := oldBinary.Size()
 	if oldSize < 0 {
-		return errors.New("old binary size cannot be negative")
+		return 0, errors.New("old binary size cannot be negative")
 	}
 	patchSize := patch.Size()
 	if patchSize < headerSize {
-		return errors.New("corrupt patch: shorter than header")
+		return 0, errors.New("corrupt patch: shorter than header")
 	}
 
 	//	File format:
@@ -100,10 +101,10 @@ func Patch(
 
 	var header [headerSize]byte
 	if _, err := io.ReadFull(io.NewSectionReader(patch, 0, headerSize), header[:]); err != nil {
-		return fmt.Errorf("corrupt patch: read header: %w", err)
+		return 0, fmt.Errorf("corrupt patch: read header: %w", err)
 	}
 	if string(header[:len(magic)]) != magic {
-		return errors.New("corrupt patch: invalid magic")
+		return 0, errors.New("corrupt patch: invalid magic")
 	}
 
 	controlLength := decodeInt64(header[8:])
@@ -111,7 +112,7 @@ func Patch(
 	newSize := decodeInt64(header[24:])
 
 	if controlLength < 0 || diffLength < 0 || newSize < 0 {
-		return fmt.Errorf(
+		return 0, fmt.Errorf(
 			"corrupt patch (control length %v diff length %v new size %v)",
 			controlLength,
 			diffLength,
@@ -119,50 +120,53 @@ func Patch(
 		)
 	}
 	if newSize > maxOutputSize {
-		return fmt.Errorf("patch output size %d exceeds limit %d", newSize, maxOutputSize)
+		return 0, fmt.Errorf("patch output size %d exceeds limit %d", newSize, maxOutputSize)
 	}
 
 	controlOffset := int64(headerSize)
 	if controlLength > patchSize-controlOffset {
-		return errors.New("corrupt patch: control block exceeds patch size")
+		return 0, errors.New("corrupt patch: control block exceeds patch size")
 	}
 	diffOffset := controlOffset + controlLength
 	if diffLength > patchSize-diffOffset {
-		return errors.New("corrupt patch: diff block exceeds patch size")
+		return 0, errors.New("corrupt patch: diff block exceeds patch size")
 	}
 	extraOffset := diffOffset + diffLength
 
 	controlReader, err := decompress(io.NewSectionReader(patch, controlOffset, controlLength))
 	if err != nil {
-		return fmt.Errorf("open control stream: %w", err)
+		return 0, fmt.Errorf("open control stream: %w", err)
 	}
 	if controlReader == nil {
-		return errors.New("open control stream: decompressor returned a nil reader")
+		return 0, errors.New("open control stream: decompressor returned a nil reader")
 	}
 	defer func() { err = errors.Join(err, closeReader(controlReader)) }()
 
 	diffReader, err := decompress(io.NewSectionReader(patch, diffOffset, diffLength))
 	if err != nil {
-		return fmt.Errorf("open diff stream: %w", err)
+		return 0, fmt.Errorf("open diff stream: %w", err)
 	}
 	if diffReader == nil {
-		return errors.New("open diff stream: decompressor returned a nil reader")
+		return 0, errors.New("open diff stream: decompressor returned a nil reader")
 	}
 	defer func() { err = errors.Join(err, closeReader(diffReader)) }()
 
 	extraReader, err := decompress(io.NewSectionReader(patch, extraOffset, patchSize-extraOffset))
 	if err != nil {
-		return fmt.Errorf("open extra stream: %w", err)
+		return 0, fmt.Errorf("open extra stream: %w", err)
 	}
 	if extraReader == nil {
-		return errors.New("open extra stream: decompressor returned a nil reader")
+		return 0, errors.New("open extra stream: decompressor returned a nil reader")
 	}
 	defer func() { err = errors.Join(err, closeReader(extraReader)) }()
 
-	return applyPatch(
+	if err := applyPatch(
 		oldBinary, oldSize, output,
 		controlReader, diffReader, extraReader, newSize,
-	)
+	); err != nil {
+		return 0, err
+	}
+	return newSize, nil
 }
 
 func closeReader(reader io.Reader) error {
