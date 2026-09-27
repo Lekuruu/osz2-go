@@ -89,6 +89,12 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 			}
 			control[i] = decodeInt64(encodedInteger[:])
 		}
+		if control[0] < 0 {
+			return nil, errors.New("corrupt patch: negative diff length")
+		}
+		if control[1] < 0 {
+			return nil, errors.New("corrupt patch: negative extra length")
+		}
 
 		if newPosition+control[0] > newSize {
 			return nil, errors.New("corrupt patch: diff data exceeds output size")
