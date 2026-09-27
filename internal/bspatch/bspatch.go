@@ -35,8 +35,9 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 	//	from oldBinary to x bytes from the diff block; copy y bytes from the
 	//	extra block; move by z bytes in oldBinary".
 
+	patchReader := bytes.NewReader(patch)
 	var header [headerSize]byte
-	if _, err := io.ReadFull(bytes.NewReader(patch), header[:]); err != nil {
+	if _, err := io.ReadFull(patchReader, header[:]); err != nil {
 		return nil, fmt.Errorf("corrupt patch: read header: %w", err)
 	}
 	if string(header[:len(magic)]) != magic {
@@ -56,23 +57,21 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 		)
 	}
 
-	controlPatch := bytes.NewReader(patch)
-	if _, err := controlPatch.Seek(headerSize, io.SeekStart); err != nil {
-		return nil, err
+	patchSize := int64(len(patch))
+	controlOffset := int64(headerSize)
+	if controlLength > patchSize-controlOffset {
+		return nil, errors.New("corrupt patch: control block exceeds patch size")
 	}
-	controlReader := bzip2.NewReader(controlPatch)
 
-	diffPatch := bytes.NewReader(patch)
-	if _, err := diffPatch.Seek(headerSize+controlLength, io.SeekStart); err != nil {
-		return nil, err
+	diffOffset := controlOffset + controlLength
+	if diffLength > patchSize-diffOffset {
+		return nil, errors.New("corrupt patch: diff block exceeds patch size")
 	}
-	diffReader := bzip2.NewReader(diffPatch)
 
-	extraPatch := bytes.NewReader(patch)
-	if _, err := extraPatch.Seek(headerSize+controlLength+diffLength, io.SeekStart); err != nil {
-		return nil, err
-	}
-	extraReader := bzip2.NewReader(extraPatch)
+	extraOffset := diffOffset + diffLength
+	controlReader := bzip2.NewReader(io.NewSectionReader(patchReader, controlOffset, controlLength))
+	diffReader := bzip2.NewReader(io.NewSectionReader(patchReader, diffOffset, diffLength))
+	extraReader := bzip2.NewReader(io.NewSectionReader(patchReader, extraOffset, patchSize-extraOffset))
 
 	result := make([]byte, newSize)
 	oldSize := int64(len(oldBinary))
