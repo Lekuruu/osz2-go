@@ -22,7 +22,11 @@ const (
 )
 
 // Patch applies patch to oldBinary and returns the resulting binary.
-func Patch(oldBinary, patch []byte) ([]byte, error) {
+func Patch(oldBinary, patch []byte, maxOutputSize int64) ([]byte, error) {
+	if maxOutputSize < 0 {
+		return nil, errors.New("maximum output size cannot be negative")
+	}
+
 	//	File format:
 	//		0	8	"BSDIFF40"
 	//		8	8	X
@@ -56,6 +60,14 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 			newSize,
 		)
 	}
+	if newSize > maxOutputSize {
+		return nil, fmt.Errorf("patch output size %d exceeds limit %d", newSize, maxOutputSize)
+	}
+
+	outputSize := int(newSize)
+	if int64(outputSize) != newSize {
+		return nil, fmt.Errorf("patch output size %d exceeds platform capacity", newSize)
+	}
 
 	patchSize := int64(len(patch))
 	controlOffset := int64(headerSize)
@@ -73,7 +85,7 @@ func Patch(oldBinary, patch []byte) ([]byte, error) {
 	diffReader := bzip2.NewReader(io.NewSectionReader(patchReader, diffOffset, diffLength))
 	extraReader := bzip2.NewReader(io.NewSectionReader(patchReader, extraOffset, patchSize-extraOffset))
 
-	result := make([]byte, newSize)
+	result := make([]byte, outputSize)
 	oldSize := int64(len(oldBinary))
 
 	var oldPosition int64
