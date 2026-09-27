@@ -1,31 +1,27 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BSD-2-Clause AND MIT
 // SPDX-FileCopyrightText: 2003-2005 Colin Percival
 // SPDX-FileCopyrightText: 2019 Gabriel Ochsenhofer
 // SPDX-FileCopyrightText: 2025 TotallyGamerJet
 
-// Package bspatch is a binary diff program using suffix sorting.
+// Package bspatch applies BSDIFF40 binary patches.
 package bspatch
 
 import (
 	"bytes"
 	"compress/bzip2"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
 
-// Patch takes the oldBinary and a patch file and produces the new binary or an error.
-func Patch(oldBinary, patch []byte) (newBinary []byte, err error) {
-	oldsize := len(oldBinary)
-	var newsize int
-	header := make([]byte, 32)
-	buf := make([]byte, 8)
-	var lenread int
-	var i int
-	ctrl := make([]int, 3)
+const (
+	headerSize = 32
+	magic      = "BSDIFF40"
+)
 
-	f := bytes.NewReader(patch)
-
+// Patch applies patch to oldBinary and returns the resulting binary.
+func Patch(oldBinary, patch []byte) ([]byte, error) {
 	//	File format:
 	//		0	8	"BSDIFF40"
 	//		8	8	X
@@ -36,145 +32,97 @@ func Patch(oldBinary, patch []byte) (newBinary []byte, err error) {
 	//		32+X+Y	???	bzip2(extra block)
 	//	with control block a set of triples (x,y,z) meaning "add x bytes
 	//	from oldBinary to x bytes from the diff block; copy y bytes from the
-	//	extra block; seek forwards in oldBinary by z bytes".
+	//	extra block; move by z bytes in oldBinary".
 
-	// Read header
-	var n int
-	if n, err = f.Read(header); err != nil || n < 32 {
-		if err != nil {
-			return nil, fmt.Errorf("corrupt patch %w", err)
-		}
-		return nil, fmt.Errorf("corrupt patch (n %v < 32)", n)
+	var header [headerSize]byte
+	if _, err := io.ReadFull(bytes.NewReader(patch), header[:]); err != nil {
+		return nil, fmt.Errorf("corrupt patch: read header: %w", err)
 	}
-	// Check for appropriate magic
-	if !bytes.Equal(header[:8], []byte("BSDIFF40")) {
-		return nil, fmt.Errorf("corrupt patch (header BSDIFF40)")
+	if string(header[:len(magic)]) != magic {
+		return nil, errors.New("corrupt patch: invalid magic")
 	}
 
-	// Read lengths from header
-	bzctrllen := offtin(header[8:])
-	bzdatalen := offtin(header[16:])
-	newsize = offtin(header[24:])
+	controlLength := offtin(header[8:])
+	diffLength := offtin(header[16:])
+	newSize := offtin(header[24:])
 
-	if bzctrllen < 0 || bzdatalen < 0 || newsize < 0 {
-		return nil, fmt.Errorf("corrupt patch (bzctrllen %v bzdatalen %v newsize %v)", bzctrllen, bzdatalen, newsize)
+	if controlLength < 0 || diffLength < 0 || newSize < 0 {
+		return nil, fmt.Errorf(
+			"corrupt patch (control length %v diff length %v new size %v)",
+			controlLength,
+			diffLength,
+			newSize,
+		)
 	}
 
-	// Close patch file and re-open it via libbzip2 at the right places
-	f = nil
-	cpf := bytes.NewReader(patch)
-	if _, err := cpf.Seek(32, io.SeekStart); err != nil {
+	controlPatch := bytes.NewReader(patch)
+	if _, err := controlPatch.Seek(headerSize, io.SeekStart); err != nil {
 		return nil, err
 	}
-	cpfbz2 := bzip2.NewReader(cpf)
-	dpf := bytes.NewReader(patch)
-	if _, err = dpf.Seek(int64(32+bzctrllen), io.SeekStart); err != nil {
+	controlReader := bzip2.NewReader(controlPatch)
+
+	diffPatch := bytes.NewReader(patch)
+	if _, err := diffPatch.Seek(int64(headerSize+controlLength), io.SeekStart); err != nil {
 		return nil, err
 	}
-	dpfbz2 := bzip2.NewReader(dpf)
-	epf := bytes.NewReader(patch)
-	if _, err = epf.Seek(int64(32+bzctrllen+bzdatalen), io.SeekStart); err != nil {
+	diffReader := bzip2.NewReader(diffPatch)
+
+	extraPatch := bytes.NewReader(patch)
+	if _, err := extraPatch.Seek(int64(headerSize+controlLength+diffLength), io.SeekStart); err != nil {
 		return nil, err
 	}
-	epfbz2 := bzip2.NewReader(epf)
+	extraReader := bzip2.NewReader(extraPatch)
 
-	pnew := make([]byte, newsize)
+	result := make([]byte, newSize)
+	oldSize := len(oldBinary)
+	oldPosition := 0
+	newPosition := 0
+	var encodedOffset [8]byte
+	var control [3]int
 
-	oldpos := 0
-	newpos := 0
-
-	for newpos < newsize {
-		// Read control data
-		for i = 0; i <= 2; i++ {
-			lenread, err = zreadall(cpfbz2, buf, 8)
-			if lenread != 8 || (err != nil && err != io.EOF) {
-				return nil, fmt.Errorf("corrupt patch or bzstream ended: %w (read: %v/8)", err, lenread)
+	for newPosition < newSize {
+		for i := range control {
+			if _, err := io.ReadFull(controlReader, encodedOffset[:]); err != nil {
+				return nil, fmt.Errorf("corrupt patch: read control data: %w", err)
 			}
-			ctrl[i] = offtin(buf)
-		}
-		// Sanity-check
-		if newpos+ctrl[0] > newsize {
-			return nil, fmt.Errorf("corrupt patch (sanity check)")
+			control[i] = offtin(encodedOffset[:])
 		}
 
-		// Read diff string
-		// lenread, err = dpfbz2.Read(pnew[newpos : newpos+ctrl[0]])
-		lenread, err = zreadall(dpfbz2, pnew[newpos:newpos+ctrl[0]], ctrl[0])
-		if lenread < ctrl[0] || (err != nil && err != io.EOF) {
-			return nil, fmt.Errorf("corrupt patch or bzstream ended (2): %w", err)
+		if newPosition+control[0] > newSize {
+			return nil, errors.New("corrupt patch: diff data exceeds output size")
 		}
-		// Add pold data to diff string
-		for i = 0; i < ctrl[0]; i++ {
-			if oldpos+i >= 0 && oldpos+i < oldsize {
-				pnew[newpos+i] += oldBinary[oldpos+i]
+
+		if _, err := io.ReadFull(diffReader, result[newPosition:newPosition+control[0]]); err != nil {
+			return nil, fmt.Errorf("corrupt patch: read diff data: %w", err)
+		}
+		for i := range control[0] {
+			if oldPosition+i >= 0 && oldPosition+i < oldSize {
+				result[newPosition+i] += oldBinary[oldPosition+i]
 			}
 		}
 
-		// Adjust pointers
-		newpos += ctrl[0]
-		oldpos += ctrl[0]
+		newPosition += control[0]
+		oldPosition += control[0]
 
-		// Sanity-check
-		if newpos+ctrl[1] > newsize {
-			return nil, fmt.Errorf("corrupt patch newpos+ctrl[1] newsize")
+		if newPosition+control[1] > newSize {
+			return nil, errors.New("corrupt patch: extra data exceeds output size")
 		}
 
-		// Read extra string
-		// epfbz2.Read was not reading all the requested bytes, probably an internal buffer limitation ?
-		// it was encapsulated by zreadall to work around the issue
-		lenread, err = zreadall(epfbz2, pnew[newpos:newpos+ctrl[1]], ctrl[1])
-		if lenread < ctrl[1] || (err != nil && err != io.EOF) {
-			return nil, fmt.Errorf("corrupt patch or bzstream ended (3): %w", err)
+		if _, err := io.ReadFull(extraReader, result[newPosition:newPosition+control[1]]); err != nil {
+			return nil, fmt.Errorf("corrupt patch: read extra data: %w", err)
 		}
-		// Adjust pointers
-		newpos += ctrl[1]
-		oldpos += ctrl[2]
+		newPosition += control[1]
+		oldPosition += control[2]
 	}
 
-	// Clean up the bzip2 reads
-	// if err = cpfbz2.Close(); err != nil {
-	// 	return nil, err
-	// }
-	// if err = dpfbz2.Close(); err != nil {
-	// 	return nil, err
-	// }
-	// if err = epfbz2.Close(); err != nil {
-	// 	return nil, err
-	// }
-	cpfbz2 = nil
-	dpfbz2 = nil
-	epfbz2 = nil
-	cpf = nil
-	dpf = nil
-	epf = nil
-
-	return pnew, nil
+	return result, nil
 }
 
-// offtin reads an int64 (little endian)
+// offtin decodes a BSDIFF signed integer into an int.
 func offtin(buf []byte) int {
 	y := binary.LittleEndian.Uint64(buf)
 	if (y>>56)&0x80 != 0 {
 		return -int(y & 0x7FFFFFFF)
 	}
 	return int(y & 0x7FFFFFFF)
-}
-
-func zreadall(r io.Reader, b []byte, expected int) (int, error) {
-	var allread int
-	var offset int
-	for {
-		nread, err := r.Read(b[offset:])
-		if nread == expected {
-			return nread, err
-		}
-		if err != nil {
-			return allread + nread, err
-		}
-		allread += nread
-		if allread >= expected {
-			return allread, nil
-		}
-		offset += nread
-	}
 }

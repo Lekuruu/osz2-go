@@ -10,16 +10,16 @@ import (
 )
 
 func TestPatch(t *testing.T) {
-	oldfile := []byte{
+	oldBinary := []byte{
 		0x66, 0xFF, 0xD1, 0x55, 0x56, 0x10, 0x30, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD1,
 	}
-	newfilecomp := []byte{
+	expected := []byte{
 		0x66, 0xFF, 0xD1, 0x55, 0x56, 0x10, 0x30, 0x00,
 		0x44, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0xD1, 0xFF, 0xD1,
 	}
-	patchfile := []byte{
+	patch := []byte{
 		0x42, 0x53, 0x44, 0x49, 0x46, 0x46, 0x34, 0x30,
 		0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -41,89 +41,42 @@ func TestPatch(t *testing.T) {
 		0xA4, 0x19, 0x82, 0x58, 0x5D, 0xC9, 0x14, 0xE1,
 		0x42, 0x41, 0x94, 0x94, 0xC1, 0x0C,
 	}
-	newfile, err := Patch(oldfile, patchfile)
+	result, err := Patch(oldBinary, patch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(newfile, newfilecomp) {
-		t.Fatal("expected:", newfilecomp, "got:", newfile)
-	}
-	// test invalid patch
-	_, err = Patch(oldfile, oldfile)
-	if err == nil {
-		t.Fail()
+	if !bytes.Equal(result, expected) {
+		t.Fatalf("Patch() = %v, want %v", result, expected)
 	}
 }
 
-func TestCorruptHeader(t *testing.T) {
-	corruptPatch := []byte{
+func TestPatchRejectsCorruptHeader(t *testing.T) {
+	wrongMagic := []byte{
 		0x41, 0x53, 0x44, 0x49, 0x46, 0x46, 0x34, 0x30,
 		0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	}
-	_, err := Patch(corruptPatch, corruptPatch[:30])
-	if err == nil {
-		t.Fatal("header should be corrupt")
-	}
-	if err.Error()[:13] != "corrupt patch" {
-		t.Fatal("header should be corrupt (2)")
-	}
-	_, err = Patch(corruptPatch, corruptPatch)
-	if err == nil {
-		t.Fatal("header should be corrupt (3)")
-	}
-	if err.Error() != "corrupt patch (header BSDIFF40)" {
-		t.Fatal("header should be corrupt (4)")
-	}
-	corruptPatch[0] = 0x42
+
+	negativeControlLength := bytes.Clone(wrongMagic)
+	negativeControlLength[0] = 0x42
 	corruptLen := []byte{100, 0, 0, 0, 0, 0, 0, 128}
-	copy(corruptPatch[8:], corruptLen)
-	_, err = Patch(corruptPatch, corruptPatch)
-	if err == nil {
-		t.Fatal("header should be corrupt (5)")
-	}
-	if err.Error()[:15] != "corrupt patch (" {
-		t.Fatal("header should be corrupt (6)")
-	}
-}
+	copy(negativeControlLength[8:], corruptLen)
 
-type lowcaprdr struct {
-	read []byte
-	n    int
-}
+	tests := []struct {
+		name  string
+		patch []byte
+	}{
+		{name: "truncated", patch: wrongMagic[:30]},
+		{name: "wrong magic", patch: wrongMagic},
+		{name: "negative control length", patch: negativeControlLength},
+	}
 
-func (r *lowcaprdr) Read(b []byte) (int, error) {
-	if len(b) > 8 {
-		copy(r.read[r.n:], b[:8])
-		r.n += 8
-		return 8, nil
-	}
-	copy(r.read[r.n:], b)
-	r.n += len(b)
-	return len(b), nil
-}
-
-func TestZReadAll(t *testing.T) {
-	buf := []byte{
-		0x10, 0x10, 0x10, 0x10, 0x20, 0x20, 0x20, 0x20,
-		0x30, 0x30, 0x30, 0x30, 0x40, 0x40, 0x40, 0x40,
-		0x43,
-	}
-	rr := &lowcaprdr{
-		read: make([]byte, 1024),
-	}
-	nr, err := zreadall(rr, buf, len(buf))
-	if err != nil {
-		t.Fail()
-	}
-	if nr != len(buf) {
-		t.Fail()
-	}
-	if buf[16] != rr.read[16] {
-		t.Fail()
-	}
-	if buf[7] != rr.read[7] {
-		t.Fail()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := Patch(nil, test.patch); err == nil {
+				t.Fatal("Patch() succeeded with a corrupt header")
+			}
+		})
 	}
 }
