@@ -41,12 +41,12 @@ func TestPatch(t *testing.T) {
 		0xA4, 0x19, 0x82, 0x58, 0x5D, 0xC9, 0x14, 0xE1,
 		0x42, 0x41, 0x94, 0x94, 0xC1, 0x0C,
 	}
-	result, err := Patch(oldBinary, patch)
+	result, err := PatchBytes(oldBinary, patch, int64(len(expected)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(result, expected) {
-		t.Fatalf("Patch() = %v, want %v", result, expected)
+		t.Fatalf("PatchBytes() = %v, want %v", result, expected)
 	}
 }
 
@@ -74,8 +74,8 @@ func TestPatchRejectsCorruptHeader(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Patch(nil, test.patch); err == nil {
-				t.Fatal("Patch() succeeded with a corrupt header")
+			if _, err := PatchBytes(nil, test.patch, 0); err == nil {
+				t.Fatal("PatchBytes() succeeded with a corrupt header")
 			}
 		})
 	}
