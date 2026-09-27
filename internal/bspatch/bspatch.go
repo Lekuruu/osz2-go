@@ -58,7 +58,12 @@ func PatchBytes(oldBinary, patch []byte, maxOutputSize int64) ([]byte, error) {
 }
 
 // Patch applies a patch while streaming the result to output.
-func Patch(oldBinary, patch SizedReaderAt, output io.Writer, maxOutputSize int64, decompress Decompressor) (err error) {
+func Patch(
+	oldBinary, patch SizedReaderAt,
+	output io.Writer,
+	maxOutputSize int64,
+	decompress Decompressor,
+) (err error) {
 	if maxOutputSize < 0 {
 		return errors.New("maximum output size cannot be negative")
 	}
