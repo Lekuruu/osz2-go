@@ -7,7 +7,6 @@
 package bspatch
 
 import (
-	"bytes"
 	"compress/bzip2"
 	"compress/gzip"
 	"encoding/binary"
@@ -39,22 +38,6 @@ func Bzip2Reader(source io.Reader) (io.Reader, error) {
 // GzipReader creates a reader for an osu! BSDIFF40 patch section.
 func GzipReader(source io.Reader) (io.Reader, error) {
 	return gzip.NewReader(source)
-}
-
-// PatchBytes applies an in-memory BSDIFF40 patch.
-func PatchBytes(oldBinary, patch []byte, maxOutputSize int64) ([]byte, error) {
-	var output bytes.Buffer
-	_, err := Patch(
-		bytes.NewReader(oldBinary),
-		bytes.NewReader(patch),
-		&output,
-		maxOutputSize,
-		Bzip2Reader,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
 }
 
 // Patch applies a patch while streaming the result to output and returns the

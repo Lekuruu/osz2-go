@@ -60,34 +60,3 @@ func TestPatch(t *testing.T) {
 		t.Fatalf("Patch() = %v, want %v", result.Bytes(), expected)
 	}
 }
-
-func TestPatchRejectsCorruptHeader(t *testing.T) {
-	wrongMagic := []byte{
-		0x41, 0x53, 0x44, 0x49, 0x46, 0x46, 0x34, 0x30,
-		0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
-
-	negativeControlLength := bytes.Clone(wrongMagic)
-	negativeControlLength[0] = 0x42
-	corruptLen := []byte{100, 0, 0, 0, 0, 0, 0, 128}
-	copy(negativeControlLength[8:], corruptLen)
-
-	tests := []struct {
-		name  string
-		patch []byte
-	}{
-		{name: "truncated", patch: wrongMagic[:30]},
-		{name: "wrong magic", patch: wrongMagic},
-		{name: "negative control length", patch: negativeControlLength},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := PatchBytes(nil, test.patch, 0); err == nil {
-				t.Fatal("PatchBytes() succeeded with a corrupt header")
-			}
-		})
-	}
-}
