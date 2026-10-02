@@ -5,7 +5,9 @@
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lekuruu/osz2-go/.github%2Fworkflows%2Fbuild.yml)](https://github.com/Lekuruu/osz2-go/actions/workflows/build.yml)
 [![GitHub License](https://img.shields.io/github/license/Lekuruu/osz2-go)](https://github.com/Lekuruu/osz2-go/blob/main/LICENSE)
 
-osz2-go is a Go library for reading and writing `.osz2` and `.osf2` packages. The format work uses [Osz2Decryptor](https://github.com/xxCherry/Osz2Decryptor) by [xxCherry](https://github.com/xxCherry) as a reference.
+osz2-go is a Go library for reading and writing `.osz2` and `.osf2` packages. The format is used in the osu! beatmap submission system & the osu! stream mobile game, as a way to store a beatmap archive with additional metadata.
+
+---
 
 A package [`Reader`](pkg/osz2/package.go) is just a standard [`fs.FS`](https://pkg.go.dev/io/fs#FS), with the extra metadata that osz2 packages provide. File bodies are being decrypted while they are read, instead of being loaded into memory all at once, which is pretty cool. A package [`Writer`](pkg/osz2/package_write.go) can export packages from any [`fs.FS`](https://pkg.go.dev/io/fs#FS) to a destination writer (also without loading all source files into memory).
 
