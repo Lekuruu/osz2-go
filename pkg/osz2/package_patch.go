@@ -9,6 +9,48 @@ import (
 	"github.com/Lekuruu/osz2-go/internal/bspatch"
 )
 
+// ApplyPatch applies an osu! BSDIFF40 patch to output.
+// It returns the bytes written to output & any error.
+func ApplyPatch(
+	source io.ReaderAt,
+	sourceSize int64,
+	patch io.ReaderAt,
+	patchSize int64,
+	maxOutputSize int64,
+	output io.Writer,
+) (int64, error) {
+	if source == nil {
+		return 0, errors.New("osz2: nil package source")
+	}
+	if sourceSize < 0 {
+		return 0, fmt.Errorf("osz2: invalid package size %d", sourceSize)
+	}
+	if patch == nil {
+		return 0, errors.New("osz2: nil patch source")
+	}
+	if patchSize < 0 {
+		return 0, fmt.Errorf("osz2: invalid patch size %d", patchSize)
+	}
+	if maxOutputSize < 0 {
+		return 0, fmt.Errorf("osz2: invalid maximum output size %d", maxOutputSize)
+	}
+	if output == nil {
+		return 0, errors.New("osz2: nil patch output")
+	}
+
+	size, err := bspatch.Patch(
+		sizedReaderAt{ReaderAt: source, size: sourceSize},
+		sizedReaderAt{ReaderAt: patch, size: patchSize},
+		output,
+		maxOutputSize,
+		bspatch.GzipReader,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("osz2: apply patch: %w", err)
+	}
+	return size, nil
+}
+
 // OpenPatch applies an osu! BSDIFF40 patch and
 // opens the resulting osz2 / osf2 filesystem.
 func OpenPatch(
@@ -19,22 +61,6 @@ func OpenPatch(
 	maxOutputSize int64,
 	keyType KeyType,
 ) (*ReadCloser, error) {
-	if source == nil {
-		return nil, errors.New("osz2: nil package source")
-	}
-	if sourceSize < 0 {
-		return nil, fmt.Errorf("osz2: invalid package size %d", sourceSize)
-	}
-	if patch == nil {
-		return nil, errors.New("osz2: nil patch source")
-	}
-	if patchSize < 0 {
-		return nil, fmt.Errorf("osz2: invalid patch size %d", patchSize)
-	}
-	if maxOutputSize < 0 {
-		return nil, fmt.Errorf("osz2: invalid maximum output size %d", maxOutputSize)
-	}
-
 	// Stream the patched data to a temporary file
 	file, err := os.CreateTemp("", "osz2-patch-*")
 	if err != nil {
@@ -45,15 +71,12 @@ func OpenPatch(
 		return nil, errors.Join(original, temporary.Close())
 	}
 
-	size, err := bspatch.Patch(
-		sizedReaderAt{ReaderAt: source, size: sourceSize},
-		sizedReaderAt{ReaderAt: patch, size: patchSize},
-		temporary,
-		maxOutputSize,
-		bspatch.GzipReader,
+	size, err := ApplyPatch(
+		source, sourceSize, patch, patchSize,
+		maxOutputSize, temporary,
 	)
 	if err != nil {
-		return cleanup(fmt.Errorf("osz2: apply patch: %w", err))
+		return cleanup(err)
 	}
 
 	// Open the patched package as an osz2 / osf2 filesystem
