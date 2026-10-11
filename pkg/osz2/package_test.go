@@ -57,6 +57,9 @@ func testPackage(t *testing.T, filename string, keyType KeyType) {
 	if err != nil {
 		t.Fatalf("Failed to parse package %s: %v", filename, err)
 	}
+	if err := pkg.Verify(); err != nil {
+		t.Fatalf("Failed to verify package: %v", err)
+	}
 
 	t.Logf("Metadata entries: %d", len(pkg.Metadata()))
 	for metaType, value := range pkg.Metadata() {
