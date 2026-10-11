@@ -190,9 +190,14 @@ func (r *Reader) ReadDir(name string) ([]fs.DirEntry, error) {
 // Verify checks the encrypted package body & every
 // regular file without loading them all into memory.
 func (r *Reader) Verify() error {
-	if err := r.verifyBodyHash(); err != nil {
-		return err
-	}
+	// Apprently, this doesn't actually work
+	// Well it *does* work, but only for packages that don't have a video, which is interesting
+	// Even the original implementation had this commented out so I'd assume it was just broken
+	// https://github.com/ppy/osu-stream/blob/master/osu!stream/Helpers/osu!common/MapPackage.cs#L332-L340
+
+	// if err := r.verifyBodyHash(); err != nil {
+	// 	return err
+	// }
 
 	paths := make([]string, 0, len(r.entries))
 	for name, entry := range r.entries {
