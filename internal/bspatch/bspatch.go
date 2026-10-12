@@ -116,7 +116,7 @@ func Patch(
 	}
 	extraOffset := diffOffset + diffLength
 
-	controlReader, err := decompress(io.NewSectionReader(patch, controlOffset, controlLength))
+	controlReader, err := openSection(patch, controlOffset, controlLength, decompress)
 	if err != nil {
 		return 0, fmt.Errorf("open control stream: %w", err)
 	}
@@ -125,7 +125,7 @@ func Patch(
 	}
 	defer func() { err = errors.Join(err, closeReader(controlReader)) }()
 
-	diffReader, err := decompress(io.NewSectionReader(patch, diffOffset, diffLength))
+	diffReader, err := openSection(patch, diffOffset, diffLength, decompress)
 	if err != nil {
 		return 0, fmt.Errorf("open diff stream: %w", err)
 	}
@@ -134,7 +134,7 @@ func Patch(
 	}
 	defer func() { err = errors.Join(err, closeReader(diffReader)) }()
 
-	extraReader, err := decompress(io.NewSectionReader(patch, extraOffset, patchSize-extraOffset))
+	extraReader, err := openSection(patch, extraOffset, patchSize-extraOffset, decompress)
 	if err != nil {
 		return 0, fmt.Errorf("open extra stream: %w", err)
 	}
@@ -150,6 +150,14 @@ func Patch(
 		return 0, err
 	}
 	return newSize, nil
+}
+
+func openSection(patch io.ReaderAt, offset, length int64, decompress Decompressor) (io.Reader, error) {
+	section := io.NewSectionReader(patch, offset, length)
+	if length == 0 {
+		return section, nil
+	}
+	return decompress(section)
 }
 
 func closeReader(reader io.Reader) error {
