@@ -14,18 +14,18 @@ import (
 
 var testFixtures = os.DirFS("../../tests")
 
-// TestPackagesOsz2 tests parsing of all .osz2 files in the tests directory
+// TestPackagesOsz2 tests parsing of all packages in the osz2 fixtures directory.
 func TestPackagesOsz2(t *testing.T) {
-	for _, testFile := range testPackageNames(t, "*.osz2") {
+	for _, testFile := range testPackageNames(t, "osz2/*.osz2") {
 		t.Run(testFile, func(t *testing.T) {
 			testPackage(t, testFile, KeyTypeOsz2)
 		})
 	}
 }
 
-// TestPackagesOsf2 tests parsing of all .osf2 files in the tests directory
+// TestPackagesOsf2 tests parsing of all packages in the osf2 fixtures directory.
 func TestPackagesOsf2(t *testing.T) {
-	for _, testFile := range testPackageNames(t, "*.osf2") {
+	for _, testFile := range testPackageNames(t, "osf2/*.osf2") {
 		t.Run(testFile, func(t *testing.T) {
 			testPackage(t, testFile, KeyTypeOsf2)
 		})
@@ -33,12 +33,12 @@ func TestPackagesOsf2(t *testing.T) {
 }
 
 func TestPackagePatch(t *testing.T) {
-	base, err := fs.ReadFile(testFixtures, "patch-base.osz2")
+	base, err := fs.ReadFile(testFixtures, "patch/base.osz2")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	patch, err := fs.ReadFile(testFixtures, "patch-data.patch")
+	patch, err := fs.ReadFile(testFixtures, "patch/data.patch")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func testPackageData(t *testing.T, filename string, data []byte, keyType KeyType
 }
 
 func TestPackageRoundTrip(t *testing.T) {
-	for _, testFile := range testPackageNames(t, "*.osz2") {
+	for _, testFile := range testPackageNames(t, "osz2/*.osz2") {
 		t.Run(testFile, func(t *testing.T) {
 			originalData, err := fs.ReadFile(testFixtures, testFile)
 			if err != nil {
@@ -222,7 +222,7 @@ func TestPackageRoundTrip(t *testing.T) {
 }
 
 func BenchmarkParsePackage(b *testing.B) {
-	data, err := fs.ReadFile(testFixtures, "nekodex - welcome to christmas.osz2")
+	data, err := fs.ReadFile(testFixtures, "osz2/nekodex - welcome to christmas.osz2")
 	if err != nil {
 		b.Fatal(err)
 	}
