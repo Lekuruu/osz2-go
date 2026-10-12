@@ -32,6 +32,36 @@ func TestPackagesOsf2(t *testing.T) {
 	}
 }
 
+func TestPackagePatch(t *testing.T) {
+	base, err := fs.ReadFile(testFixtures, "patch-base.osz2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patch, err := fs.ReadFile(testFixtures, "patch-data.patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := bytes.NewBuffer([]byte{})
+
+	outputSize, err := ApplyPatch(
+		bytes.NewReader(base),
+		int64(len(base)),
+		bytes.NewReader(patch),
+		int64(len(patch)),
+		100_000_000,
+		out,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputSize != int64(out.Len()) {
+		t.Fatalf("ApplyPatch() output size = %d, wrote %d bytes", outputSize, out.Len())
+	}
+
+	testPackageData(t, "patched.osz2", out.Bytes(), KeyTypeOsz2)
+}
+
 func testPackageNames(t testing.TB, pattern string) []string {
 	t.Helper()
 
@@ -51,6 +81,11 @@ func testPackage(t *testing.T, filename string, keyType KeyType) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testPackageData(t, filename, data, keyType)
+}
+
+func testPackageData(t *testing.T, filename string, data []byte, keyType KeyType) {
+	t.Helper()
 
 	t.Logf("Parsing package: %s", filename)
 	pkg, err := NewReader(bytes.NewReader(data), int64(len(data)), keyType)
